@@ -44,7 +44,7 @@ class BuyerParams:
     beta: float = 2.0
     kappa: float = 0.0
     tau_weight: float = 1.5          # D082: amplifies (1-tau)'s pull on accept probability, independent of relaxation depth d
-    patience_rounds: int = 4
+    patience_rounds: int = 3
     location_category: str = "LOCATION"           # D076
     location_strict_resistance: float = 1.0       # multiplier on a STRICT persona's location tolerance
 
