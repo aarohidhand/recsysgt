@@ -15,7 +15,7 @@ D077: the negotiator never clarifies; it goes straight to the relaxation loop (m
 final turn (RECOMMEND / BEST_AVAILABLE), which closes the conversation (no buyer turn follows). Each row carries the per-constraint
 attempt ledger (``constraint_attempts``).
 
-Ends: shortlist reached (RECOMMEND), buyer patience (``persona.patience_rounds`` rounds without a YES or COUNTER) or the turn cap
+Ends: shortlist reached (RECOMMEND), buyer patience (``persona.patience_rounds`` rounds that are entirely NO — a COUNTER or BYPASS resets it, D100) or the turn cap
 (one public WRAP_UP turn, then the negotiator's final RECOMMEND / BEST_AVAILABLE), or an empty front (BEST_AVAILABLE,
 D050). A diagnostic front (spec 8.7) is logged in the row but never proposed: it cannot change any bound, so the
 outcome equals ``matching.simulate_negotiation`` (which calibration uses) apart from D055 proof-request draws, which
@@ -228,7 +228,7 @@ def run_dialogue(brief: ScenarioBrief, persona: Persona, buyer_profile: BuyerPro
     ever_beliefs: list[BelievedConstraint] = []     # the latest non-empty belief list (cut-off fallback)
     wrapped = False                      # the public WRAP_UP turn has been appended (D050 amendment)
     sticky: dict[str, str] = {}          # belief_id -> constraint_id: the GT-side label of a belief stays stable across turns
-    dry = 0                              # consecutive buyer rounds without a YES (Counter counts as non-YES)
+    dry = 0                              # D100: consecutive buyer turns that are ALL-NO (COUNTER/BYPASS resets it, D100)
     acks = 0
     awaiting: Optional[RelaxationAnalysisRow] = None     # PROPOSE row whose belief "after" columns are still open
 

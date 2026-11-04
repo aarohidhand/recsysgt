@@ -60,7 +60,7 @@ class BuyerResponse:
     decision: dict[str, dict]                           # belief ref -> record (RelaxationAnalysisRow.buyer_decision)
     utterance: str
     llm_call_ids: list[str]
-    yes: bool                                           # any YES (resets the patience counter)
+    yes: bool                                           # D100: any YES / COUNTER / BYPASS (progress); only ALL-NO burns patience
     errors: list[str] = field(default_factory=list)
 
 
@@ -405,4 +405,6 @@ class BuyerSimulator:
                                 ctx=self.ctx(turn_idx), persona=self.persona, already_stated=self.already_stated())
         return BuyerResponse(action=turn_action, outcome=outcome, counter_value=counter_value, responses=responses,
                              proof_requests=[p for p, _ in proofs], accepted=accepted, decision=record,
-                             utterance=utt, llm_call_ids=ids, yes=Action.YES in actions)
+                             utterance=utt, llm_call_ids=ids,
+                             # D100: any cooperative/progressive action (YES / COUNTER / BYPASS) counts as progress
+                             yes=bool(actions & {Action.YES, Action.COUNTER, Action.BYPASS}))
