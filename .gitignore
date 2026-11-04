@@ -8,8 +8,10 @@ __pycache__/
 
 # runtime data and outputs (root only; do not ignore src/gtgen/data/)
 /data/
+/data.zip
 /out/
 /.cache/
+/.claude/
 
 # editor-local files
 /.vscode/
