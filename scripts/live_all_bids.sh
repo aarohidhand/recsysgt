@@ -92,7 +92,10 @@ failures="$LOG_DIR/failures.txt"
 run_one() {
     local bid="$1"
     local log="$LOG_DIR/${bid//\//_}.log"
-    local args=(pilot --live --personas 1 --bid "$bid" --data-dir "$DATA_DIR")
+    # D098: use category-tuned persona count instead of hard-coded 1
+    persona_n=$(python -c "from gtgen.llm.strata import personas_for_category; import csv; meta={r['bid_number']:r for r in csv.DictReader(open('$DATA_DIR/gem_bids_metadata.csv'))}; row=meta.get('$bid'); print(personas_for_category(row['product_category']) if row else 1)")
+    persona_n="${persona_n:-1}"
+    local args=(pilot --live --personas "$persona_n" --bid "$bid" --data-dir "$DATA_DIR")
     if [[ "$FRESH" == "1" ]]; then
         args+=(--fresh)
     fi

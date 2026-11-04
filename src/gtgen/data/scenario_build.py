@@ -511,6 +511,8 @@ def build_scenario(bid_id: str, settings: Mapping, runners, *, persona_seed: int
     n_neg_product = sum(1 for c in allc if c.provenance != "synthetic_commercial"
                         and c.scenario_role == ScenarioRole.NEGOTIATED and c.framing_decision not in _INACTIVE)
     validity = scenario_validity(n_neg_product, after, loosest, _soft_only_blocked(cells, hmap), min_shortlist)
+    if not validity["valid"] and "loosest_below_min_shortlist" in validity["reasons"]:
+        validity["checks"]["unsatisfiable_blockers"] = unsatisfiable_blockers(cells, hmap, min_shortlist)
     for r in validity["reasons"]:
         qa.append(f"invalid_scenario:{r}")
     # audit: PASS count of every negotiated non-synthetic HARD constraint (truth side, final cells) and, when the

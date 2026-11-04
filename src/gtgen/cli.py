@@ -261,7 +261,8 @@ def cmd_pilot(args: argparse.Namespace) -> None:
                 sk = built.skip_reason(settings) if hasattr(built, "skip_reason") else None
                 if sk:                               # D074: invalid scenarios are skipped with the reason, never negotiated
                     skipped.append(f"{bid_id}:s{seed}:{sk}")
-                    row = {"bid_id": bid_id, "persona_seed": seed, "prompt": None, "last_error": sk}
+                    row = {"bid_id": bid_id, "persona_seed": seed, "prompt": None, "last_error": sk,
+                          "scenario_meta": built.brief.scenario_meta}
                     skipped_rows.append(row)
                     _append_jsonl(skipped_path, row)
                     logger.warning("Scenario %s s%d skipped: %s", bid_id, seed, sk)

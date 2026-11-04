@@ -159,16 +159,17 @@ def scenario_validity(n_negotiated_product: int, initial_feasible: int, loosest:
     reasons: list[str] = []
     if int(n_negotiated_product) < 1:
         reasons.append("no_negotiated_product_constraint")
-    if int(loosest) < ms:
-        reasons.append("loosest_below_min_shortlist")
-    if int(initial_feasible) >= ms:
-        reasons.append("initial_not_below_min_shortlist")
-    elif int(soft_only_blocked) < 1 or int(initial_feasible) + int(soft_only_blocked) < ms:
-        reasons.append("no_soft_relaxation_path")
+    loosest_below = int(loosest) < ms
+    no_soft_path = int(initial_feasible) < ms and (
+        int(soft_only_blocked) < 1 or int(initial_feasible) + int(soft_only_blocked) < ms)
+    # D098 (2026-11-04): loosest_below_min_shortlist and no_soft_relaxation_path are informational only;
+    # they feed diagnostics/unsatisfiable_blockers but no longer cause an invalid_scenario skip.
     return {"valid": not reasons, "reasons": reasons,
             "checks": {"negotiated_product_constraints": int(n_negotiated_product),
                        "initial_feasible": int(initial_feasible), "loosest_feasible": int(loosest),
-                       "soft_only_blocked": int(soft_only_blocked), "min_shortlist": ms}}
+                       "soft_only_blocked": int(soft_only_blocked), "min_shortlist": ms,
+                       "loosest_below_min_shortlist": loosest_below,
+                       "no_soft_relaxation_path": no_soft_path}}
 
 
 def invalid_scenario_skip(valid: bool, reasons: Sequence[str], settings: Mapping) -> Optional[str]:
