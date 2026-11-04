@@ -549,6 +549,31 @@ def buyer_reply_fallback_text(items: list[Any]) -> str:
     return " ".join(parts) or "Noted, thank you."
 
 
+def missing_counter_values(items: list[Any], text: str) -> list[str]:
+    """Counter values a buyer reply failed to state.
+
+    A multi-item proposal can produce several COUNTER decisions in one turn.  The buyer must put every one of
+    them into the utterance, otherwise the negotiator only sees (and can only answer) the counters that were
+    spoken.  Numeric counters are compared by their numbers so "11.5" and "11.50" are the same; a categorical
+    counter must appear as a word/phrase.
+    """
+    low = text.lower()
+    missing: list[str] = []
+    for i in items:
+        if getattr(i, "action", "") != "COUNTER":
+            continue
+        cv = str(getattr(i, "counter_value", "") or "").strip()
+        if not cv:
+            continue
+        wanted = numbers_in(cv)
+        if wanted:
+            if not wanted <= numbers_in(text):
+                missing.append(cv)
+        elif not re.search(r"(?<!\w)" + re.escape(cv.lower()) + r"(?!\w)", low):
+            missing.append(cv)
+    return missing
+
+
 def buyer_reveal_fallback_text(req_texts: list[str]) -> str:
     """Deterministic buyer reveal: just states the (already-tidied) requirement text(s) being answered."""
     texts = [t.rstrip(".") + "." for t in dict.fromkeys(req_texts) if t]
@@ -777,6 +802,7 @@ def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[s
 
     t = norm(text or "")
     av = [str(a).strip() for a in (c.allowed_values or []) if str(a).strip() and str(a) != "None"]
+    bv = (c.buyer_value or "").strip()
 
     def has(tok: str) -> bool:
         return re.search(r"(?<![\w.])" + re.escape(norm(tok)) + r"(?![\w]|\.\d)", t, re.I) is not None
@@ -785,14 +811,26 @@ def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[s
         return re.fullmatch(r"-?\d+(\.\d+)?", x) is not None
 
     if av:
+        # GEM/2019/B/209245: buyer_value and allowed_values can disagree in the extracted data
+        # ("THREE CORE ..." vs "TWO CORE ...").  The model correctly echoes buyer_value/raw_text;
+        # either extracted form is a real value, so accept it rather than skip the bid.
+        if bv and has(bv):
+            return None
         if len(av) > 5 and all(is_num(a) for a in av):
             if re.search(r"\d", t):
                 return None
         elif any(has(a) for a in av):
             return None
+        # GEM/2019/B/242710: an allowed value can itself be an inequality range
+        # (">= 1.10 & < 1.15").  The model writes "between 1.10 and 1.15"; accept that
+        # when every number in the range appears in the text.
+        for a in av:
+            if re.search(r"[<>]=?|\bbetween\b|\bto\b", a, re.I):
+                wanted = numbers_in(a)
+                if wanted and wanted <= numbers_in(t):
+                    return None
         return ("it must state the required value(s), not only the attribute or unit; include at least one of "
                 f"{av[:6]} (or a numeric range if there are more than 5)")
-    bv = (c.buyer_value or "").strip()
     if bv and is_num(bv) and not has(bv):
         return f"it must state the required value {bv} {c.unit or ''}".rstrip()
     return None
@@ -1668,7 +1706,10 @@ class LLMRunners:
                 return bad
             low = o.utterance.lower()
             missing = [d for d in proof_docs if d.lower() not in low]
-            return f"the proof request must name the document exactly: {missing}" if missing else None
+            if missing:
+                return f"the proof request must name the document exactly: {missing}"
+            counters = missing_counter_values(items, o.utterance)
+            return f"state every counter_value exactly; missing: {counters}" if counters else None
 
         _, text, ids, flags = self._call_or_fallback(
             "buyer_reply", variables, UtteranceOutput, check, seed, 5, ctx,

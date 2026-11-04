@@ -58,6 +58,7 @@ class RelaxConfig:
     max_combinations: int = 1000000
     menu_size: int = 5
     max_items: int = 4                        # negotiation.max_bundle_size: points changing more rules are dropped
+    reference_bundle_points: int = 2          # negotiation.reference_bundle_points: cheapest menu points merged
     max_diagnostic_points: int = 3
     alpha: float = 6.0
     beta: float = 2.0
@@ -103,6 +104,7 @@ def config_from_settings(settings: Optional[Mapping]) -> RelaxConfig:
         max_combinations=int(sec.get("max_relaxation_combinations", d.max_combinations)),
         menu_size=int(sec.get("menu_size", d.menu_size)),
         max_items=int(neg.get("max_bundle_size", sec.get("max_items", d.max_items))),
+        reference_bundle_points=int(neg.get("reference_bundle_points", d.reference_bundle_points)),
         alpha=float(buyer.get("alpha", d.alpha)), beta=float(buyer.get("beta", d.beta)),
         kappa=float(buyer.get("kappa", d.kappa)), tau_weight=float(buyer.get("tau_weight", d.tau_weight)),
         bounds_tolerance=float(sec.get("belief_bounds_tolerance", d.bounds_tolerance)),

@@ -284,6 +284,74 @@ def _menu_for(constraints, candidates, ctx, cfg, bounds, unit, diagnostic, overr
     return out
 
 
+def merge_cheapest_points(points: Sequence[MenuPoint], rules: Sequence[RelaxRule],
+                          constraints: Sequence[ConstraintT], candidates: Sequence[CandidateView],
+                          ctx: EvalContext, base: Mapping[str, int], *, unit: str = "supplier",
+                          max_items: int = 4, n: int = 2,
+                          diagnostic: bool = False) -> Optional[MenuPoint]:
+    """Merge the ``n`` cheapest useful menu points into one proposal.
+
+    The reference policy normally offers only ``points[0]``.  This helper deliberately widens that to the
+    cheapest two (or ``n``) points so the first ask can relax more than one rule.  Only points that add a new
+    changed rule are merged; a point that merely deepens an already-selected rule is not a second relaxation,
+    so the helper returns the first point when no such point exists.  The union is capped at ``max_items``
+    changed rules, the same cap the front uses for a single menu point.
+    """
+    if not points:
+        return None
+    if n <= 1 or len(points) == 1:
+        return points[0]
+
+    def changed_refs(p: MenuPoint) -> set[str]:
+        return {ref for ref, lv in p.point.level_map().items() if lv > base[ref]}
+
+    first = points[0]
+    selected = [first]
+    seen = changed_refs(first)
+    for p in points[1:]:
+        if len(selected) >= n:
+            break
+        refs = changed_refs(p)
+        if refs - seen:
+            selected.append(p)
+            seen |= refs
+    if len(selected) < n:
+        return first
+
+    merged = dict(first.point.level_map())
+    for p in selected[1:]:
+        for ref, lv in p.point.level_map().items():
+            merged[ref] = max(merged.get(ref, base[ref]), lv)
+
+    keep = set(changed_refs(first))
+    for p in selected[1:]:
+        for ref, lv in p.point.level_map().items():
+            if lv > base[ref] and ref not in keep:
+                if len(keep) >= max_items:
+                    merged[ref] = base[ref]
+                else:
+                    keep.add(ref)
+    for ref, lv in list(merged.items()):
+        if lv > base[ref] and ref not in keep:
+            merged[ref] = base[ref]
+
+    levels = tuple((ref, merged.get(ref, base[ref])) for ref, _ in first.point.levels)
+    gain = role_aware_gain(constraints, candidates, ctx, rules=rules, levels_before=base, levels_after=merged)
+    cost = cost_of(rules, merged)
+    supplier_of = {c.product_id: c.supplier_id for c in candidates}
+    before_suppliers = {supplier_of[p] for p in gain.before}
+    after_suppliers = {supplier_of[p] for p in gain.after}
+    recovered_products = frozenset(gain.gained)
+    recovered_suppliers = frozenset(after_suppliers - before_suppliers)
+    point = FrontPoint(levels=levels, cost=cost, strict_suppliers=recovered_suppliers,
+                       strict_products=recovered_products, hopeful_suppliers=recovered_suppliers,
+                       hopeful_products=recovered_products, diagnostic=diagnostic)
+    by_rule = {r.ref: r for r in rules}
+    return MenuPoint(index=first.index, point=point, changes=_changes(by_rule, point, base), gain=gain,
+                     verified_before=gain.count_before(unit), verified_after=gain.count_after(unit),
+                     cost=float(cost), is_reference=True, diagnostic=diagnostic)
+
+
 def agrees_with_reference(menu: Menu, chosen_index: Optional[int]) -> Optional[bool]:
     """True iff the negotiator chose the reference (cheapest) point; None if there is nothing to choose."""
     if menu.reference_index is None or chosen_index is None:

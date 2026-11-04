@@ -1261,3 +1261,40 @@ empty `bids.txt` is an error. With no allowlist, the runner falls back to `METAD
 The direct CLI also gained `--data-dir` and the path env overrides `GTGEN_RAW_DIR`, `GTGEN_CANONICAL_DIR`,
 `GTGEN_OUT_DIR`, and `GTGEN_LLM_CACHE`. The one-bid-per-process and `--personas 1` rules (D080/D084) are unchanged.
 The operator-facing instructions are in the root `README.md`.
+
+## D091 — Bundle the cheapest two useful relaxation points (2026-11-04)
+
+**Requirement (user):** the negotiator must always offer the cheapest two useful relaxation points together.
+
+`matching.front.merge_cheapest_points` takes the cheapest menu point and merges the cheapest later point that adds
+at least one new changed rule; if no later point adds a new rule it keeps the single cheapest point. The union is
+capped by `negotiation.max_bundle_size` (4). `negotiation.reference_bundle_points` defaults to **2** and is mapped to
+`RelaxConfig.reference_bundle_points`; the negotiator and the calibration simulator use the same merged proposal.
+Legacy golden/mechanics tests are pinned to `reference_bundle_points: 1` so their hand-computed conversations stay
+stable; the shipped two-point default is covered by the dedicated bundling tests.
+
+## D092 — Buyer counters every item of a multi-item proposal (2026-11-04)
+
+**Requirement (user):** after the negotiator proposes several relaxations, the buyer must be able to counter every
+one of them on the next turn.
+
+`buyer_decide` now checks the tolerance/COUNTER branch before the `max_relaxations` limit. A COUNTER is not an
+acceptance and therefore does not consume the limit; the limit is applied only to a YES. This lets a persona with
+`max_relaxations=1` counter both items of a two-item proposal. `buyer_reply` also validates that every COUNTER
+item's `counter_value` appears in the utterance; an utterance that drops one is retried, and the deterministic
+fallback states every item. Tests: `tests/matching/test_buyer_bounds.py`,
+`tests/dialogue/test_relaxation_loop.py`, `tests/llm/test_d054_live.py`.
+
+## D093 — Reframe accepts conflicting and inequality-range extracted values (2026-11-04)
+
+**Requirement (user):** a live run must not skip at prep just because the extracted data is imperfect; the issue is
+something to improve, not a reason to lose the bid.
+
+Two real data shapes were rejected by the reframe value check:
+
+- `GEM/2019/B/209245` has `buyer_value` `THREE CORE ...` but `allowed_values` `TWO CORE ...`. The model correctly
+  echoes `buyer_value`/`raw_text`; the check now accepts either extracted form.
+- `GEM/2019/B/242710` has `allowed_values=[">= 1.10 & < 1.15"]`; the model writes “between 1.10 and 1.15”. The
+  check now accepts an inequality/range allowed value when every number in it appears in the text.
+
+`scripts/live_all_bids.sh` also treats a CLI exit 0 containing `SKIPPED ` as a failure instead of printing `ok`.

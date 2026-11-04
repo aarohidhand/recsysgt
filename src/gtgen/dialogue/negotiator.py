@@ -38,7 +38,8 @@ from gtgen.llm import (
 )
 from gtgen.matching import (
     EvalContext, agrees_with_reference, apply_levels, baseline_levels, belief_role_reasons, build_menu, build_rules,
-    config_from_settings, feasible_ids as _feasible_ids, role_aware_gain, synthetic_normalised, tighten,
+    config_from_settings, feasible_ids as _feasible_ids, merge_cheapest_points, role_aware_gain, synthetic_normalised,
+    tighten,
 )
 from gtgen.matching.evidence import parse_number_unit
 from gtgen.matching.states import ADJACENCY, norm_state
@@ -913,7 +914,11 @@ class Negotiator:
             self.last_analysis["diagnostic"] = bool(menu.diagnostic)
             return self._best_available_step(transcript, catalogue, beliefs, current, cells, ectx, ids,
                                              wrapped_up=False)
-        mp = menu.reference()
+        mp = merge_cheapest_points(menu.points, rules, beliefs, cands, ectx, base,
+                                   unit=self._unit, max_items=self._cfg.max_items,
+                                   n=self._cfg.reference_bundle_points, diagnostic=menu.diagnostic)
+        if mp is None:
+            mp = menu.reference()
         self.last_analysis["chosen_point"] = mp.to_dict()
         self.last_analysis["agrees"] = agrees_with_reference(menu, mp.index)
         return self._propose(transcript, catalogue, beliefs, current, rules, base, ectx, menu, mp, seed, ids, ctx)

@@ -98,7 +98,13 @@ run_one() {
     fi
     echo "[$(date -u +%H:%M:%S)] $bid -> $log"
     if python -m gtgen.cli "${args[@]}" >"$log" 2>&1; then
-        echo "  ok"
+        # The CLI exits 0 after a per-bid skip (D066), so a clean exit is not enough: report the skip as a failure.
+        if grep -q 'SKIPPED ' "$log"; then
+            echo "  SKIPPED (see $log)"
+            echo "$bid skipped" >>"$failures"
+        else
+            echo "  ok"
+        fi
     else
         local rc=$?
         echo "  FAILED rc=$rc (see $log)"

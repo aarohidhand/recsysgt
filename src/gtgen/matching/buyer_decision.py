@@ -9,10 +9,11 @@ Per item, in order (gtgen deviations of the spec are marked):
 1. diagnostic proposal                      -> ACKNOWLEDGE (no bound change)
 2. doc-proof item                           -> BYPASS (verification list only; never a relaxation, D053 item 8)
 3. HARD item, or ref in ``not_permitted``   -> NO (reason ``policy``) -- CLAUDE.md rule 1.6
-4. limit: new distinct rules accepted (this proposal, in ref order) would exceed ``max_relaxations`` -> NO (``limit``)
-5. tolerance: level r > T_c (T_c = tolerance[ref] or tolerance[category], default 0, floor, capped at L_c):
+4. tolerance: level r > T_c (T_c = tolerance[ref] or tolerance[category], default 0, floor, capped at L_c):
    every tier and counter level k = T_c satisfies cur <= k < r -> COUNTER at k
-   (per item; the spec counters single-rule proposals only), else NO (``tolerance``)
+   (per item, including every item of a multi-item proposal; a COUNTER is not an acceptance and does not
+   consume the limit), else NO (``tolerance``)
+5. limit: new distinct rules accepted (this proposal, in ref order) would exceed ``max_relaxations`` -> NO (``limit``)
 6. probabilistic: p = sigmoid(alpha_eff*(softness - d) + beta*V - kappa), alpha_eff = alpha*(1 - decision_randomness),
    softness = tau_weight*(1 - H); tau_weight=1.5 (D082), d = r/L_c (this item), V = log(1+confirmed_recovery)/log(1+pool) clipped to [0,1]; YES if u < p else NO
    (``declined``).  H = persona.tau.
@@ -161,15 +162,18 @@ def buyer_decide(items: Sequence[ProposalItem], params: BuyerParams, rng: random
         if it.hardness == Hardness.HARD or it.ref in not_permitted:
             out.append(ItemDecision(it.ref, Action.NO, r, r, "policy"))
             continue
-        if it.ref not in taken and len(taken) + 1 > params.max_relaxations:
-            out.append(ItemDecision(it.ref, Action.NO, r, r, "limit"))
-            continue
+        # A COUNTER is not an acceptance: it does not consume max_relaxations.  Check tolerance first so a
+        # multi-item proposal gets a counter for every item, even when accepting them all would exceed the
+        # persona's relaxation limit.  The limit is applied below, only to an actual YES.
         tol = _tolerance(params, it)
         if r > tol:
             if it.current_level <= tol < r:
                 out.append(ItemDecision(it.ref, Action.COUNTER, r, tol, "tolerance"))
             else:
                 out.append(ItemDecision(it.ref, Action.NO, r, r, "tolerance"))
+            continue
+        if it.ref not in taken and len(taken) + 1 > params.max_relaxations:
+            out.append(ItemDecision(it.ref, Action.NO, r, r, "limit"))
             continue
         p = accept_probability(params, r, it.max_level, v)
         u = rng.random()
