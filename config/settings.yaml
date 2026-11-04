@@ -1,0 +1,271 @@
+# OWNER: main session (coordinator). All tunable constants live here.
+
+paths:
+  raw: data/raw
+  canonical: data/canonical
+  out: out/gt
+  llm_cache: .cache/llm
+
+golden_param_true_means: HARD      # confirmed 2026-10-26
+
+llm:
+  base_url: https://openrouter.ai/api/v1
+  model: google/gemma-4-26b-a4b-it:free   # D062 (reverts D058): ONLY this model; provider Google AI Studio; nothing paid
+  api_key_env: OPENROUTER_API_KEY   # default key; used by every role whose own variable below is unset
+  api_key_roles:                    # D063: one variable per role so several accounts share the 20 rpm / 50 per day limits
+    prep: OPENROUTER_API_KEY_PREP           # reframe, doc_classify, align, normalise
+    claims: OPENROUTER_API_KEY_CLAIMS       # doc_claim, claim_check
+    persona: OPENROUTER_API_KEY_PERSONA     # persona
+    buyer: OPENROUTER_API_KEY_BUYER         # buyer_opening, buyer_reply, buyer_reveal, reveal_check
+    negotiator: OPENROUTER_API_KEY_NEGOTIATOR   # every negotiator_* prompt
+  api_key_pools:                    # D084/D086: optional round-robin pools per role; each key keeps its own limiter
+    claims: &all_key_vars           # doc_claim batches are the long pole; the other four accounts are idle then
+      - OPENROUTER_API_KEY_CLAIMS
+      - OPENROUTER_API_KEY_PREP
+      - OPENROUTER_API_KEY_PERSONA
+      - OPENROUTER_API_KEY_BUYER
+      - OPENROUTER_API_KEY_NEGOTIATOR
+    buyer: *all_key_vars            # D086: dialogue calls otherwise wait 30-55 s on one account's token pacer
+    negotiator: *all_key_vars
+  backend: openrouter               # openrouter | gemini_direct (D017)
+  backends:                         # the active backend's `provider` block is sent as OpenRouter `provider`
+    openrouter:                     # BYOK: route to Google AI Studio using your own key
+      provider:
+        order: ["google-ai-studio"] # D062: the only provider for the :free model
+        allow_fallbacks: false
+    gemini_direct:                  # OpenRouter without the AI Studio pin; served by DeepInfra
+      provider:
+        order: ["deepinfra"]
+        allow_fallbacks: false
+        require_parameters: true    # provider must support response_format json_schema
+  # D064 (supersedes D062 limits): the 262,144-token context window is the real per-request ceiling (input + output combined);
+  # output is capped at 32,768 per request. Batching is the main defence against the 50 requests/day limit.
+  # D068 (user, 2026-11-01; real Google AI Studio limits for Gemma 4 26B PER KEY): 30 rpm, 16K tokens/minute, 14.4K requests/day.
+  # The binding limit is tokens per minute -> small batches + a per-key rolling token pacer. 262,144 context stays the hard ceiling.
+  tpm_limit: 16000                  # tokens per minute per API key (provider limit)
+  tpm_safety: 0.9                   # pacer budget = tpm_limit * tpm_safety (estimates are ~2x conservative; input + planned output counted)
+  token_limit_total: 262144         # hard endpoint limit, input + output combined
+  max_tokens_per_call: 14000       # our budget (~8% headroom: the estimator is conservative and the smoke call showed ~2x over-estimate)
+  max_completion_tokens: 8000       # hard output cap per request
+  batch_completion_target: 3000     # planning target for the OUTPUT of one batched call (quality + latency); batches are packed up to this
+  min_completion_tokens: 1000       # if the budget leaves less than this, fail the call (batch smaller)
+  structured_output: auto           # D062: auto|json_schema|prompt_json; decided by the live smoke call (prompt_json = no response_format, schema in prompt)
+  batch_max_constraints: 25         # upper bound on items per batched call (quality guard); batches are token-aware (llm/batching.py plan_batches)
+  disable_reasoning: true           # D067: send reasoning {enabled: false}; no thinking tokens burned (user's working client does this)
+  deterministic_first: true         # D066: rule pass for doc_classify/align/doc_claim, LLM only for what rules cannot resolve
+  max_retries: 6                    # schema-validation retries (D066, user); each retry is a paced call and appends the validation error
+  max_retries_final: 2              # D087: the closing turn has a deterministic safe fallback; don't burn 6 live retries on wording
+  timeout_s: 600                    # long batched completions (up to 32k tokens) take minutes; a timeout would burn retries of the 50/day
+  rate_limit:
+    requests_per_minute: 30
+    min_interval_s: 2.2             # 60/20 = 3.0 s plus margin; applies to every outgoing request
+  http_retry:                       # transport retries on 429 / 5xx / timeouts
+    max_attempts: 6                 # retries after the first try (user, 2026-10-31)
+    backoff_s: [8, 16, 24, 32, 40, 48]   # linear, multiples of 8 s; used when no Retry-After header is present
+    respect_retry_after: true
+    max_retry_after_s: 300          # D067: provider retry hints (header, body retryDelay, 'retry in Ns') are honoured up to this; wait = max(linear, hint + margin)
+    retry_after_margin_s: 5
+    max_wait_s: 300                 # cap on any single wait
+    non_retryable_statuses: [400, 401, 402, 403, 404, 422]   # fail at once, never retry
+  temperature:
+    reframe: 0.2
+    normalise: 0.0
+    align: 0.0
+    doc_classify: 0.0
+    persona: 1.1                    # randomness source for buyer personality
+    buyer_opening: 0.8
+    buyer_reply: 0.8
+    negotiator_reply: 0.7
+    negotiator_final: 0.7           # D069
+    negotiator_extract: 0.0
+    reveal_check: 0.0
+    claim_check: 0.0
+    negotiator_clarify: 0.7         # D044
+    buyer_reveal: 0.8               # D044
+    negotiator_interpret: 0.0       # D045
+    doc_claim: 0.0                  # D051
+
+persona:
+  tiers:                            # tau upper bounds (exclusive)
+    lenient: 0.25
+    medium: 0.50
+    medium_strict: 0.75
+    strict: 1.01
+  counter_allowed_tiers: [medium_strict, strict]
+  tau_spread_check:                 # QA: LLMs cluster; reject run if spread too narrow
+    min_std: 0.18
+    min_tiers_covered: 3
+  personas_per_bid: 3
+  diversity:                        # D060
+    stratified_traits: [tau, tolerance, patience_rounds, decision_randomness, max_relaxations]   # seeded Latin-hypercube strata over a run of N scenarios
+    min_pair_distance: 0.15         # audit: normalised-trait Euclidean/sqrt(dims) distance below this = near-duplicate personality
+    histogram_bins: 10
+    company_name_similarity: 0.85   # token/char similarity at or above this = near-duplicate company name (regenerate with nonce bump)
+    max_company_regenerations: 3
+    max_same_industry_city_share: 0.34   # share of a run's scenarios allowed to repeat one (industry, city) pair
+  realism:                          # D061
+    opening_max_sentences: 6
+    opening_min_sentences: 2
+    opening_max_constraints_revealed_share: 0.75   # opening must not dump the whole spec (progressive reveal)
+    turn_repeat_similarity: 0.9     # near-verbatim repeat of another turn in the same run
+    max_enumerated_items: 2         # D065: a buyer turn with >= 3 numbered/bulleted items is a burst
+    forbid_inline_tags: true        # D065: [HARD] / [SOFT ..] / [NEW ..] in any utterance
+    forbid_spoken_arithmetic: true  # D065: negotiator never speaks candidate counts / gain / cost figures
+    forbid_supplier_stats: true     # D070: neither speaker states a supplier rating or years of experience/trading history
+    check_final_turn_closes: true   # D073: last negotiator turn has no '?', no future-action promise, no trailing offer
+    check_no_deferral: true         # D073: buyer reply after a CLARIFY must not defer ('later', 'for now')
+    check_negotiation_depth: true   # D073: WARN 'no_negotiation' when zero PROPOSE_RELAXATION turns and BEST_AVAILABLE
+    budget_catalogue_factor: [0.5, 3.0]   # budget / (cheapest-to-median unit price * quantity) must fall in this range
+
+negotiation:
+  min_shortlist: 3
+  max_turns_hard_cap: 20
+  max_bundle_size: 4
+  min_marginal_gain: 1
+  numeric_relaxation_steps: distinct_candidate_values
+  tie_break: smallest_normalised_cost
+  negotiator_counter_requires_gain: 1
+  unclear_limit: 2                  # D045: consecutive UNCLEAR answers on an attribute before it counts as refused
+  bundle_search:                    # D025 near-miss bundle search, D026 numeric "="
+    max_blockers: 4                 # near-miss = infeasible only via <= this many SOFT FAILs
+    categorical_extend_cost: 0.5
+    drop_cost: 1.0
+    numeric_eq_rel_tolerance: 1.0e-6
+
+dialogue:
+  progressive_reveal:               # D044
+    enabled: true
+    opening_min: 7                  # N = opening_min + persona_seed % (opening_max - opening_min + 1)
+    opening_max: 9                  # D072: richer opening (was 5-7) so the relaxation loop has material and clarify has less to do
+    key_spec_types: [product_spec, capacity, quality]   # "key specs" = BuyerConstraint.constraint_type in this list (matchability is not on the contract; these types are product-matchable in the data)
+    category_priority: [PRODUCT, CAPACITY, QUALITY, DOCUMENT, SUPPLIER, COMMERCIAL, DELIVERY]
+    clarify_max_rounds: 1           # D072 (user): clarify only disambiguates constraints ALREADY STATED in the opening (hard/soft status, unclear value); never draws new constraints out of the buyer
+    clarify_max_rounds_complex: 2   # D072: absolute maximum, only for a complex brief
+    clarify_complex_min_stated: 9   # D072: 'complex' = the opening states at least this many constraints
+    reveal_max_per_answer: 2        # buyer reveals at most this many new constraints per answer (D065: short natural answers over 2-4 turns)
+
+scenario:                           # D046 (narrowed), D048, D049
+  negotiated_min_coverage: 0.25     # D048: a HARD constraint is negotiated iff its evidence coverage in the bid pool >= this
+  demote_zero_pass: true            # D069: a HARD or SOFT (non-synthetic) constraint that NO candidate in the full pool PASSes becomes verification_only (role_reason 'zero_pass'); >=1 PASS keeps it negotiated
+  require_valid_for_negotiation: true   # D074: skip scenarios with no negotiated product constraint / no reachable relaxation path (BuiltScenario.skip_reason)
+  verification_only_fail_blocks: true    # D048 amended: an OBSERVED FAIL (real contradicting evidence) is a violation and still blocks; only MISSING evidence (UNKNOWN) is unscored
+  merge_clause_conformity: true     # D046: same-hardness clause-conformity members without a measurable value, citing the same standard id, merge
+  merge_min_members: 2
+  commercial_terms:                 # D049: SOFT, provenance synthetic_commercial, voiced by the buyer like any other constraint
+    terms: [budget_inr, qty_vs_moq, preferred_states]   # D070: supplier rating and years are RANKING-ONLY (never constraints, never spoken)
+    category:                       # constraint_category (persona.category_tolerance key) per term
+      budget_inr: COMMERCIAL
+      qty_vs_moq: COMMERCIAL
+      preferred_states: LOCATION     # D076: own tolerance category, never reuses budget's COMMERCIAL tolerance
+    band_percentiles: [0.20, 0.80]  # numeric bands = these percentiles of the pool's distribution (code derives them, the persona LLM picks inside)
+    tightness_target: [0, 2]        # inclusive range for the per-scenario target of the initial verified-feasible count; must be < negotiation.min_shortlist
+    max_tightening_steps: 10        # deterministic tightening if the LLM's values leave the actual count >= min_shortlist (steps are recorded)
+
+recommendation:                     # D050
+  match_weights: {hard: 2, soft: 1} # match_original = weighted share of the ORIGINAL negotiated constraints met (verification_only excluded)
+  best_available_k: 3               # BEST_AVAILABLE holds the top-k candidates by match_original
+  tier_targets:                     # D050 reading (A), confirmed: ONE band [lo, hi] per tier for BOTH quantities: a scenario is in band when its
+    lenient: [0.90, 1.00]           # top1_match_original is inside it (calibration, per scenario); the tier's perfect-deal share across its
+    medium: [0.80, 0.90]            # conversations should also fall inside it (eval, per tier).
+    medium_strict: [0.75, 0.85]
+    strict: [0.65, 0.75]
+  uncalibrated_flag: uncalibrated   # qa_flag for a scenario that cannot be calibrated into its tier band (the scenario is kept)
+
+doc_claims:                         # D051
+  require_verified_quote: true      # a claim counts only if the LLM's quote occurs in the listing text
+  batch_size: 24                    # claim requests per LLM call (each carries a listing snippet)
+  max_listing_chars: 1500           # listing text sent per request
+  prefilter: true                   # skip the LLM when the listing shares no term with the required document (cost control)
+  generic_cert_terms: [certif, iso, isi, bis, iec, standard, conform, approved, tested, test report, nabl, warranty, licen, accredit]
+
+relaxation:                         # D053/D056, binding reference docs/RELAXATION_LOGIC.md (section 3); key names follow the spec
+  gates:
+    allow_hard_constraint_relaxation: false             # master gate for every HARD relaxation (spec 3.1)
+    allow_hard_product_specification_relaxation: false  # extra gate for HARD rules with scope = product (needs BOTH gates)
+    immutable_kinds: ["documentary"]                    # never relaxed, whatever the gates: is_doc_proof -> verification path only
+    soft_default_relaxable: true                        # every numeric SOFT rule with a direction is relaxable
+  level_mode: relative              # levels are relative changes from the ORIGINAL value (spec 5), not fractions of the deviation
+  levels: [0.0, 0.02, 0.05, 0.10, 0.25, 0.50]   # a rule uses the levels <= its max_deviation; no compounding
+  default_max_deviation: 0.25       # so a default rule has L_c = 4
+  default_weight: 1                 # per-rule cost weight (spec 3.2)
+  cost_formula: "sum(weight_c * r_c / L_c)"     # informational (spec 5.3); exact Fraction arithmetic in code
+  max_relaxation_combinations: 1000000          # exact enumeration cap for the joint front (spec 8)
+  menu_size: 5                      # authorized points offered per front (spec 10.1)
+  buyer:                            # spec 11.3: p = sigmoid(alpha_eff*(softness - d) + beta*V - kappa), softness=tau_weight*(1-H), tau_weight=1.5
+    alpha: 6.0
+    beta: 2.0
+    kappa: 0.0
+    tau_weight: 1.5          # D082: amplifies (1-tau)'s pull on accept probability, independent of relaxation depth d
+  persona_ranges:                   # persona v3 draws (spec 11.3); H = persona.tau; seeded
+    max_relaxations: [0, 3]         # total accepted changes over the scenario (supersedes the per-turn cap)
+    max_relaxations_by_tier:        # D070 (user): strict personas may relax at most 2 times, at least once so the relaxation loop is exercised; other tiers use the range above
+      strict: [1, 2]
+    patience_rounds: [1, 4]
+    decision_randomness: [0.1, 0.5]
+    tolerance: [0.0, 5.0]           # T_c per constraint category (max relaxation depth)
+  location:                         # D076 (user): preferred_states is relaxable by set-widening, competing in the normal bundle search
+    enabled: true
+    levels: [0, 1, 2]               # 0 = original preferred set; 1 = add up to `level1_max_added_states` adjacent/common supplier states; 2 = drop the state preference (any state)
+    level1_max_added_states: 2
+    cost_weight: 1.5                # location counts more per level than budget (weight 1) in the joint-gain-vs-cost search
+    strict_resistance: 0.5          # multiplier on a STRICT persona's location tolerance (resists harder than budget/delivery); still goes through YES/COUNTER/NO by the normal sigmoid
+    persona_category: LOCATION      # own entry in persona tolerance / counter band
+  belief_bounds_tolerance: 0.0      # eval belief_bounds_accuracy: exact match of bounds
+
+proof_requests:                     # D055: seeded draw per item from f"{seed}:buyer"; probability by persona tier
+  enabled: true
+  rate_by_tier: {lenient: 0.05, medium: 0.15, medium_strict: 0.30, strict: 0.50}
+  max_per_turn: 2
+
+ranking:
+  softmax_temperature: 0.15
+  p_soft_unknown: 0.5
+  p_soft_fail: 0.3
+  unverified_text_factor: 0.9
+  rating_prior_mean: 3.8           # Bayesian rating shrinkage
+  rating_prior_count: 10
+  rating_max: 5.0                  # D029
+  tenure_cap_years: 20             # D070: was 10 (D029); 53% of suppliers sat at the old cap, so years of experience could not separate them (cold start); p90 is 16, max 24
+  default_weights:                 # persona overrides; normalised to sum 1
+    spec_match: 0.28
+    price_score: 0.20
+    moq_fit: 0.09
+    location_match: 0.15            # D070: supplier priority location > years (cold start) > rating
+    tenure_years: 0.12
+    rating_bayes: 0.08
+    evidence_confidence: 0.08
+  supplier_priority: [location_match, tenure_years, rating_bayes]   # D070: weights are forced into this order (w[0] >= w[1] >= w[2]) for persona and default weights
+
+eval:
+  k_values: [1, 3, 5, 10]
+  ece_bins: 10
+
+framing:                            # D027: single blocklist for llm output checks and gt-auditor
+  government_terms:                 # D032: whole-word match; "bid" and inflections added
+    - GeM
+    - Government e-Marketplace
+    - bid                           # D032
+    - bids                          # D032
+    - bidder                        # D032
+    - bidding                       # D032
+    - bid number
+    - tender
+    - EMD
+    - earnest money
+    - ePBG
+    - performance bank guarantee
+    - bid security
+    - MSE
+    - MSME preference
+    - MII
+    - Make in India
+    - local supplier
+    - purchase preference
+    - ministry
+    - department
+    - consignee
+    - DDO
+    - L1
+    - reverse auction
+    - bid end date
+    - offer validity

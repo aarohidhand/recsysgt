@@ -1,0 +1,44 @@
+{
+  "llm_call_id": "940a5378a79ab91526e3a6bb0626e6d3104113713cde582196758688233679ea",
+  "prompt_name": "buyer_opening",
+  "prompt_version": 5,
+  "model": "google/gemma-4-26b-a4b-it:free",
+  "backend": "openrouter",
+  "provider": {
+    "order": [
+      "google-ai-studio"
+    ],
+    "allow_fallbacks": false
+  },
+  "cache_key": "940a5378a79ab91526e3a6bb0626e6d3104113713cde582196758688233679ea",
+  "response": {
+    "utterance": "Hello, this is Kaveri Agro Pumps in Coimbatore. We need 3 submersible pump sets. The motor rating must be 1.5 HP, and ideally delivery within 15 days."
+  },
+  "raw_content": "{\"utterance\": \"Hello, this is Kaveri Agro Pumps in Coimbatore. We need 3 submersible pump sets. The motor rating must be 1.5 HP, and ideally delivery within 15 days.\"}",
+  "validated_text": "{\"utterance\": \"Hello, this is Kaveri Agro Pumps in Coimbatore. We need 3 submersible pump sets. The motor rating must be 1.5 HP, and ideally delivery within 15 days.\"}",
+  "created_at": "2026-11-01T04:13:35.755745+00:00",
+  "origin": "live",
+  "context": {
+    "scenario_id": "syn-1",
+    "turn_idx": 0,
+    "persona_seed": 11
+  },
+  "tokens": {
+    "est_input_tokens": 1692,
+    "max_tokens_sent": null,
+    "est_input_tokens_all_requests": 0,
+    "usage": null,
+    "estimator_ratio": null,
+    "requests": []
+  },
+  "structured_output": {
+    "configured": "auto",
+    "effective": "json_schema",
+    "response_format_sent": true,
+    "honoured": true,
+    "fallback": null,
+    "first_attempt_valid": true,
+    "validation_retries": 0
+  },
+  "barrier_scan": "not_applicable"
+}

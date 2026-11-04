@@ -1,0 +1,47 @@
+{
+  "llm_call_id": "3ea82040c74da971d5ce623b58eb45960baf40231d70e06318a0e2e6a80ce6ba",
+  "prompt_name": "negotiator_reply",
+  "prompt_version": 5,
+  "model": "google/gemma-4-26b-a4b-it:free",
+  "backend": "openrouter",
+  "provider": {
+    "order": [
+      "google-ai-studio"
+    ],
+    "allow_fallbacks": false
+  },
+  "cache_key": "3ea82040c74da971d5ce623b58eb45960baf40231d70e06318a0e2e6a80ce6ba",
+  "response": {
+    "utterance": "Understood, you want proof before committing. For Aqua Pumps in Rajkot, listed as ISO 9001:2015 certified, the supplier will need to provide the ISO 9001 certificate.",
+    "cited_evidence_ids": [
+      "P1"
+    ]
+  },
+  "raw_content": "{\"utterance\": \"Understood, you want proof before committing. For Aqua Pumps in Rajkot, listed as ISO 9001:2015 certified, the supplier will need to provide the ISO 9001 certificate.\", \"cited_evidence_ids\": [\"P1\"]}",
+  "validated_text": "{\"utterance\": \"Understood, you want proof before committing. For Aqua Pumps in Rajkot, listed as ISO 9001:2015 certified, the supplier will need to provide the ISO 9001 certificate.\", \"cited_evidence_ids\": [\"P1\"]}",
+  "created_at": "2026-11-01T12:08:16.818333+00:00",
+  "origin": "live",
+  "context": {
+    "scenario_id": "syn-1",
+    "turn_idx": 5,
+    "persona_seed": 11
+  },
+  "tokens": {
+    "est_input_tokens": 1759,
+    "max_tokens_sent": null,
+    "est_input_tokens_all_requests": 0,
+    "usage": null,
+    "estimator_ratio": null,
+    "requests": []
+  },
+  "structured_output": {
+    "configured": "auto",
+    "effective": "json_schema",
+    "response_format_sent": true,
+    "honoured": true,
+    "fallback": null,
+    "first_attempt_valid": true,
+    "validation_retries": 0
+  },
+  "barrier_scan": "ok"
+}

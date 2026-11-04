@@ -1,0 +1,15 @@
+# environments / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.egg-info/
+
+# runtime data and outputs (root only; do not ignore src/gtgen/data/)
+/data/
+/out/
+/.cache/
+
+# editor-local files
+/.vscode/
