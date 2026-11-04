@@ -19,7 +19,7 @@ from gtgen.matching.buyer_decision import (
 )
 from gtgen.matching.compliance import verified_feasible_ids
 from gtgen.matching.evidence import ConstraintT
-from gtgen.matching.front import Menu, build_menu, merge_cheapest_points
+from gtgen.matching.front import Menu, build_menu
 from gtgen.matching.gain import EvalContext, feasible_ids, feasible_set
 from gtgen.matching.rules import RelaxConfig, RelaxRule, apply_levels, build_rules
 
@@ -72,11 +72,7 @@ def simulate_negotiation(constraints: Sequence[ConstraintT], candidates: Sequenc
             break
         menu: Menu = build_menu(constraints, candidates, ctx, cfg, state.bounds, unit=unit,
                                 diagnostic_used=state.diagnostic_used, overrides=overrides)
-        ref_pt = merge_cheapest_points(menu.points, rules, constraints, candidates, ctx, lv,
-                                       unit=unit, max_items=cfg.max_items,
-                                       n=cfg.reference_bundle_points, diagnostic=menu.diagnostic)
-        if ref_pt is None:
-            ref_pt = menu.reference()
+        ref_pt = menu.reference()
         if ref_pt is None:
             stop = "no_options"
             break

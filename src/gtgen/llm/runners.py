@@ -829,6 +829,17 @@ def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[s
                 wanted = numbers_in(a)
                 if wanted and wanted <= numbers_in(t):
                     return None
+        # Fallback for long descriptive allowed-value lists (e.g. "Bronze grade LTB 2 of IS 318").
+        # If the model states the category/grade (first two words) or any number from the value,
+        # accept rather than aborting the scenario.
+        for a in av:
+            if len(a) > 10:
+                words = [w for w in re.split(r"[^\w]+", a) if len(w) > 2 and w.lower() not in ("of","is","to","or","and")]
+                if words and any(w.lower() in t.lower() for w in words[:3]):
+                    return None
+                nums = numbers_in(a)
+                if nums and nums <= numbers_in(t):
+                    return None
         return ("it must state the required value(s), not only the attribute or unit; include at least one of "
                 f"{av[:6]} (or a numeric range if there are more than 5)")
     if bv and is_num(bv) and not has(bv):

@@ -1298,3 +1298,6 @@ Two real data shapes were rejected by the reframe value check:
   check now accepts an inequality/range allowed value when every number in it appears in the text.
 
 `scripts/live_all_bids.sh` also treats a CLI exit 0 containing `SKIPPED ` as a failure instead of printing `ok`.
+
+## D091 REVERSAL (2026-11-04)
+**Reverted.** merge_cheapest_points bypassed the front’s own already-minimal, joint-gain-ranked bundle search (CLAUDE.md §1.4 / front.py docstring), unconditionally forcing 2 items into every proposal. This caused the buyer to evaluate multiple relaxations per turn (a correct behavior triggered by an incorrect cause) and broke the existing calibration/simulator expectations. The reference policy (single cheapest useful relaxation point) is restored; legacy tests and live runs use that path again.

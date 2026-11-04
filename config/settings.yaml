@@ -121,7 +121,7 @@ negotiation:
   min_shortlist: 3
   max_turns_hard_cap: 20
   max_bundle_size: 4
-  reference_bundle_points: 2        # merge this many cheapest useful menu points into one proposal
+
   min_marginal_gain: 1
   numeric_relaxation_steps: distinct_candidate_values
   tie_break: smallest_normalised_cost
