@@ -200,7 +200,13 @@ def cmd_pilot(args: argparse.Namespace) -> None:
         counted = httpx.post
 
         def first_call_guard(*a, **kw):
-            r = counted(*a, **kw)
+            for attempt in range(3):
+                r = counted(*a, **kw)
+                if r.status_code == 200:
+                    return r
+                if gate.count == 1 and attempt < 2:
+                    import time
+                    time.sleep(60)  # minute-interval retry for first live call
             if gate.count == 1 and r.status_code != 200:
                 raise FatalHTTP(f"first live call failed: HTTP {r.status_code}: {r.text[:800]}")
             return r
