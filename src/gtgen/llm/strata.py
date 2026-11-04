@@ -68,16 +68,20 @@ def tau_band_for_bid(bid_id: str, run_key: str, settings: Mapping,
 
 
 def personas_for_category(product_category: Optional[str]) -> int:
-    """D080: the number of tau sub-bands a product category uses (blankets/pumps 1, transformers/valves 2,
-    office/laptop bags 3, everything else 2)."""
+    """D080/D089: the number of tau sub-bands a product category uses.
+
+    The five pilot categories keep their tuned counts: cables 2, blankets/pumps 1, transformers/valves 2,
+    office/laptop bags 3. Every other category now defaults to 1 instead of 2, so uncatalogued bids do not
+    silently get a second persona.
+    """
     cat = (product_category or "").lower()
     if "blanket" in cat or "pump" in cat:
         return 1
-    if "transformer" in cat or "valve" in cat or "sluice" in cat:
+    if "cable" in cat or "transformer" in cat or "valve" in cat or "sluice" in cat:
         return 2
     if "office bag" in cat or "laptop" in cat:
         return 3
-    return 2
+    return 1
 
 
 def _float_bands(lo: float, hi: float, n: int) -> list[list[float]]:
