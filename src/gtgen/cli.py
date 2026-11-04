@@ -44,7 +44,19 @@ logger = logging.getLogger("gtgen.cli")
 
 def _load_settings(path: str = "config/settings.yaml") -> dict:
     with open(path) as f:
-        return yaml.safe_load(f)
+        settings = yaml.safe_load(f)
+    # Folder-based runs: the live_all_bids.sh wrapper exports these, and direct CLI users can too.
+    paths = settings.setdefault("paths", {})
+    for env_name, key in (
+        ("GTGEN_RAW_DIR", "raw"),
+        ("GTGEN_CANONICAL_DIR", "canonical"),
+        ("GTGEN_OUT_DIR", "out"),
+        ("GTGEN_LLM_CACHE", "llm_cache"),
+    ):
+        value = os.environ.get(env_name)
+        if value:
+            paths[key] = value
+    return settings
 
 
 def _settings_hash(settings: dict) -> str:
@@ -135,6 +147,8 @@ def _resolve_bid(raw: str) -> str:
 
 def cmd_pilot(args: argparse.Namespace) -> None:
     """Scenario pipeline (D046-D056): per (bid, persona seed) build the scenario, run the D056 loop, write GT."""
+    if getattr(args, "data_dir", None):
+        os.environ["GTGEN_RAW_DIR"] = args.data_dir
     settings = _load_settings()
     if args.live == args.mock:
         raise SystemExit("choose exactly one of --mock / --live")
@@ -341,6 +355,8 @@ def main() -> None:
     p_pilot.add_argument("--live", action="store_true", help="Use live LLM mode")
     p_pilot.add_argument("--fresh", action="store_true", help="Ignore the LLM cache for reads (D054); every call is live")
     p_pilot.add_argument("--bid", required=True, nargs="+", help="Bid id(s), full (GEM/2019/B/231682) or bare number (231682)")
+    p_pilot.add_argument("--data-dir", default=None,
+                         help="Directory holding the raw CSVs (overrides paths.raw; same as GTGEN_RAW_DIR)")
     p_pilot.add_argument("--max-requests", type=int, default=None,
                          help="Ignored since D066 (no request cap); kept for old command lines")
     p_pilot.add_argument("--personas", type=int, default=1,

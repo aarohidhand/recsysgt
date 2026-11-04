@@ -9,6 +9,7 @@ import ast
 import json
 import logging
 import math
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -337,7 +338,19 @@ def load_settings(path: str = "config/settings.yaml") -> dict:
     """Load project settings from YAML. Requires PyYAML (``pip install pyyaml``)."""
     import yaml  # lazy import; PyYAML is needed only when reading the YAML file
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        settings = yaml.safe_load(f)
+    # Folder-based runs can override the checked-in paths without editing settings.yaml.
+    paths = settings.setdefault("paths", {})
+    for env_name, key in (
+        ("GTGEN_RAW_DIR", "raw"),
+        ("GTGEN_CANONICAL_DIR", "canonical"),
+        ("GTGEN_OUT_DIR", "out"),
+        ("GTGEN_LLM_CACHE", "llm_cache"),
+    ):
+        value = os.environ.get(env_name)
+        if value:
+            paths[key] = value
+    return settings
 
 
 # ---------------------------------------------------------------- CSV loaders

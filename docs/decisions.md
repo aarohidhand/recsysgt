@@ -1229,3 +1229,35 @@ unscored, but changing the selection order is out of scope for D088.
 Tests after the extension: `tests/dialogue/test_d088.py` 6 passed; `tests/dialogue tests/matching` 467 passed. The
 full suite is 1651 passed, 1 skipped, 2 failed only because the user-expanded `data/raw/final_constraints.csv`
 changes the recorded mock-fixture key for two pilot-fixture tests; the live pipeline is unaffected.
+
+## D089 — Unlisted product categories default to one persona (2026-11-04)
+
+**Decision (user):** keep the five pilot categories at their tuned persona counts and make every other
+category default to **1** persona instead of 2. `gtgen.llm.strata.personas_for_category` now returns:
+
+- `Submersible Cable` → 2 (`GEM/2019/B/209245`)
+- `Woollen Blanket` → 1 (`GEM/2019/B/231682`)
+- `Submersible Pump` → 1 (`GEM/2019/B/242710`)
+- `Sluice Valve` → 2 (`GEM/2019/B/341930`)
+- `Laptop / Office Bag` → 3 (`GEM/2020/B/488257`)
+- everything else, including `DI Fittings` (`GEM/2020/B/626099`) → 1
+
+The pump branch still wins for compound names such as `Submersible Pump Cable`, so that case remains 1.
+Test: `tests/llm/test_strata.py::test_personas_for_category_keeps_pilot_categories_and_defaults_others_to_one`.
+
+## D090 — `bids.txt` allowlist and folder-based live runs (2026-11-04)
+
+**Requirement (user):** a normal all-bids live run must be able to run from a data folder and must only run the
+bids listed in `bids.txt` when that file is present.
+
+`scripts/live_all_bids.sh` now accepts a data folder as its first positional argument (or `DATA_DIR=...`) and
+exports `GTGEN_RAW_DIR` / `GTGEN_CANONICAL_DIR` so the CLI can read CSVs outside `data/raw`. It resolves an
+allowlist in this order: explicit `BIDS_FILE`, `<folder>/bids.txt`, repo-root `bids.txt`, then a non-empty
+`<folder>/bid_ids.txt` legacy alias. A non-empty allowlist is authoritative; an explicitly supplied or discovered
+empty `bids.txt` is an error. With no allowlist, the runner falls back to `METADATA` (default
+`<folder>/final_constraints.csv`). `BIDS_FILE=-` deliberately disables the allowlist, `BIDS=...` overrides it, and
+`DRY_RUN=1` prints the resolved bid list without making LLM calls.
+
+The direct CLI also gained `--data-dir` and the path env overrides `GTGEN_RAW_DIR`, `GTGEN_CANONICAL_DIR`,
+`GTGEN_OUT_DIR`, and `GTGEN_LLM_CACHE`. The one-bid-per-process and `--personas 1` rules (D080/D084) are unchanged.
+The operator-facing instructions are in the root `README.md`.

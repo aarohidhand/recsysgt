@@ -74,3 +74,5 @@ G. State-wise Features (for downstream analysis)
 - tests/fixtures/llm/ holds LLM mock fixtures (prompts/responses), not saved conversations.
 - To generate: python -m gtgen.cli pilot --mock --bid <id> --personas 1 (mock, fast); --live (real LLM via OpenRouter).
   Live batches run one bid per process via scripts/live_all_bids.sh (D084); --personas is 1 per bid (D080).
+  The runner accepts a data-folder argument and auto-uses `<folder>/bids.txt` (or repo-root `bids.txt`) as an
+  allowlist; without a non-empty allowlist it falls back to the folder's `final_constraints.csv`.
