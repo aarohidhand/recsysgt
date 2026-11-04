@@ -145,29 +145,21 @@ def calibrate(points: Sequence[Mapping], evaluate: Callable[[Mapping], Mapping],
 
 def scenario_validity(n_negotiated_product: int, initial_feasible: int, loosest: int, soft_only_blocked: int,
                       min_shortlist: int) -> dict:
-    """D072 point 5 / D073 validity gate.  A scenario is ``valid_for_negotiation`` only if
-
-    (a) >= 1 negotiated NON-synthetic product constraint exists (else the relaxation loop cannot fire on a product term),
-    (b) ``loosest_feasible >= min_shortlist`` (relaxing every SOFT term, HARD ones kept, reaches a shortlist), and
-    (c) a SOFT relaxation path exists: ``initial_feasible < min_shortlist`` (a negotiation is needed), at least one
-        candidate is blocked only by SOFT FAILs, and initial + those near-misses reach ``min_shortlist``.
-
-    Returns ``{"valid": bool, "reasons": [...], "checks": {...}}``; reasons use the stable ids
-    ``no_negotiated_product_constraint``, ``loosest_below_min_shortlist``, ``initial_not_below_min_shortlist``,
-    ``no_soft_relaxation_path``.  Pure."""
     ms = int(min_shortlist)
     reasons: list[str] = []
-    if int(n_negotiated_product) < 1:
-        reasons.append("no_negotiated_product_constraint")
+    no_product = int(n_negotiated_product) < 1
     loosest_below = int(loosest) < ms
     no_soft_path = int(initial_feasible) < ms and (
         int(soft_only_blocked) < 1 or int(initial_feasible) + int(soft_only_blocked) < ms)
-    # D098 (2026-11-04): loosest_below_min_shortlist and no_soft_relaxation_path are informational only;
-    # they feed diagnostics/unsatisfiable_blockers but no longer cause an invalid_scenario skip.
+    # D098 (2026-11-04) + D101 (2026-11-04): none of these reasons block negotiation any more.
+    # The negotiator always recommends something (D050: BEST_AVAILABLE on a synthetic-term-only
+    # scenario, same as any other exhausted-relaxation scenario); they stay informational, feeding
+    # diagnostics/unsatisfiable_blockers, never an invalid_scenario skip.
     return {"valid": not reasons, "reasons": reasons,
             "checks": {"negotiated_product_constraints": int(n_negotiated_product),
                        "initial_feasible": int(initial_feasible), "loosest_feasible": int(loosest),
                        "soft_only_blocked": int(soft_only_blocked), "min_shortlist": ms,
+                       "no_negotiated_product_constraint": no_product,
                        "loosest_below_min_shortlist": loosest_below,
                        "no_soft_relaxation_path": no_soft_path}}
 
