@@ -874,27 +874,12 @@ class Negotiator:
         # (c) shortlist reached -> recommend, but only candidates that are VERIFIED feasible (see _verified.py)
         verified = verified_feasible(feasible, current, cells, ectx.roles)
         self.last_analysis["verified_feasible"] = len(verified)
+        nothing_verified = len(feasible) >= self._min_shortlist and len(verified) < self._min_shortlist
+        if nothing_verified:
+            self._qa_flags.append("nothing_verified")      # recorded now; acted on only once relaxation is exhausted
         self.last_analysis["belief_role_reasons"] = dict(self._role_reasons)
-        if len(feasible) >= self._min_shortlist and len(verified) < self._min_shortlist:
-            self._last_proposal = None
-            self._qa_flags.append("nothing_verified")
-            if not wrap:
-                self.last_analysis["best_available_reason"] = "nothing_verified"
-            return self._best_available_step(transcript, catalogue, beliefs, current, cells, ectx, ids,
-                                             wrapped_up=wrap)
-        if len(verified) >= self._min_shortlist:
-            feasible = verified
-            self._last_proposal = None
-            self._recommended = True
-            qty, _unit, budget = extract_quantity_budget(transcript)
-            ranking = build_ranking_matrix(current, cands, cells, quantity=qty, budget_inr=budget,
-                                           weights=self._settings["ranking"]["default_weights"],
-                                           buyer_city=None, settings=self._settings)
-            facts = self._recommend_facts(ranking, feasible, catalogue, current, cells)
-            utterance = self._final_text("recommend", facts, seed, ids, ctx)
-            return NegotiatorStep(beliefs=current, action=Action.RECOMMEND, ranking=self._attach_proof_docs(ranking),
-                                  utterance=utterance, llm_call_ids=ids)
-
+        if nothing_verified:
+            self.last_analysis["best_available_reason"] = "nothing_verified" if wrap else None   # tagged at the exhaustion point
         # (b) D072 relaxation loop (mandatory below the shortlist): need tables + the joint front (singles and bundles up to
         # max_bundle_size) from the CURRENT bounds, over the believed-SOFT numeric rules. BEST_AVAILABLE only once it is exhausted.
         menu = build_menu(beliefs, cands, ectx, self._cfg, bounds, unit=self._unit, diagnostic_used=False)
@@ -906,6 +891,8 @@ class Negotiator:
             and (wrap or menu.diagnostic or not menu.points)
         if wrap:
             self._last_proposal = None
+            if nothing_verified:
+                self.last_analysis["best_available_reason"] = "nothing_verified"
             return self._best_available_step(transcript, catalogue, beliefs, current, cells, ectx, ids,
                                              wrapped_up=True)
         if menu.diagnostic or not menu.points:
@@ -913,6 +900,8 @@ class Negotiator:
             # proposed / accepted / refused / not relaxable / no reachable gain, so the loop is exhausted
             self._last_proposal = None
             self.last_analysis["diagnostic"] = bool(menu.diagnostic)
+            if nothing_verified:
+                self.last_analysis["best_available_reason"] = "nothing_verified"
             return self._best_available_step(transcript, catalogue, beliefs, current, cells, ectx, ids,
                                              wrapped_up=False)
         mp = menu.reference()

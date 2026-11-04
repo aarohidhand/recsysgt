@@ -165,7 +165,7 @@ scenario:                           # D046 (narrowed), D048, D049
 
 recommendation:                     # D050
   match_weights: {hard: 2, soft: 1} # match_original = weighted share of the ORIGINAL negotiated constraints met (verification_only excluded)
-  best_available_k: 3               # BEST_AVAILABLE holds the top-k candidates by match_original
+  best_available_k: 5               # BEST_AVAILABLE holds the top-k candidates by match_original (D097, 2026-11-04)
   tier_targets:                     # D050 reading (A), confirmed: ONE band [lo, hi] per tier for BOTH quantities: a scenario is in band when its
     lenient: [0.90, 1.00]           # top1_match_original is inside it (calibration, per scenario); the tier's perfect-deal share across its
     medium: [0.80, 0.90]            # conversations should also fall inside it (eval, per tier).

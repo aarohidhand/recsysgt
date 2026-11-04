@@ -1304,3 +1304,9 @@ Two real data shapes were rejected by the reframe value check:
 
 ## D096 — First-call retry: normal 8s ladder for a 502, minute-wait only for connection failures
 **Reverses a3d3344's over-correction.** A flat 60-second retry on the very first physical call was wrong: an ordinary 502/500/429 (already handled by the normal `backoff_s` ladder) got the minute treatment, and the wrapper also accidentally re-triggered on every later call because it didn't check `gate.count`. Replaced with the same ladder (`backoff_s`) for any bad status; only a true network/connection error (`httpx.RequestError`: DNS/connect/timeout) uses the full minute wait, and only when `gate.count == 1`. Same `FatalHTTP` result when retries exhaust — just reached the right way.
+
+## D097 — nothing_verified tries relaxation before giving up (and best_available_k: 5)
+**Requirement (user):** the negotiator must not abort at BEST_AVAILABLE just because `verified_feasible < min_shortlist` when the same negotiated SOFT rules still have reachable relaxation points.
+
+Fixed: `Negotiator._step()` removes the immediate `if nothing_verified: return BEST_AVAILABLE` and instead records the condition (`best_available_reason = "nothing_verified"`) at the exhaustion points (`wrap` or `not menu.points` / `menu.diagnostic`). The relaxation loop now runs fully; `BEST_AVAILABLE` only appears when the menu is genuinely exhausted (`loop_exhausted` or no reachable points), matching the semantics of `patience_exhausted` / `no_feasible`. The `buyer_decide` logic (counter-before-limit, D092) and `second_point` (D095) both remain unchanged; this fix is on the negotiator side only.
+Also raised `recommendation.best_available_k` from 3 to 5 (`config/settings.yaml`, `docs/decisions.md`).
