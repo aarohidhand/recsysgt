@@ -158,9 +158,8 @@ def cmd_pilot(args: argparse.Namespace) -> None:
         os.environ["GTGEN_LLM_FRESH"] = "1"
     bids = [_resolve_bid(b) for b in args.bid]
     n_personas = args.personas
-    if n_personas > 1:                 # D080 (user decision, 2026-11-01): at most one persona per bid
-        raise SystemExit("pilot: at most one persona per bid is allowed (--personas must be 1); "
-                         "pass --bid more than once for more bids")
+    if n_personas < 1:                 # D102 (2026-11-05): D080's 1-persona cap lifted; multiple personas per bid now run
+        raise SystemExit("pilot: --personas must be >= 1")
     logger.info("Pilot: bids=%s, personas=%d, mode=%s, fresh=%s", bids, n_personas, mode, args.fresh)
 
     from gtgen.contracts import GTConversation
