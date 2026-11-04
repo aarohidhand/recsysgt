@@ -907,6 +907,7 @@ class LLMRunners:
         check: Optional[Callable[[M], Optional[str]]] = None, seed: Optional[int] = None,
         version: int = 1, ctx: Optional[ConversationContext] = None, batch_info: Optional[dict] = None,
         max_retries: Optional[int] = None,
+        on_exhausted: Optional[Callable[[Optional[M], Optional[str]], Optional[M]]] = None,
     ) -> tuple[Optional[M], list[str], Optional[str]]:
         """Run one prompt with schema + output-check retries. Returns (parsed, call_ids, None).
 
@@ -968,6 +969,9 @@ class LLMRunners:
             # past the client's budget.
             retry = base + [rejected, correction]
             messages = retry if self._fits_budget(retry, model) else base + [correction]
+        if on_exhausted is not None:
+            fb = on_exhausted(parsed, err)
+            return fb, ids, err
         raise ScenarioSkipped(name, f"output check failed after {retries} retries: {err}", ctx)
 
     def _call_or_fallback(
@@ -2123,11 +2127,17 @@ class LLMRunners:
             bad = [i for i in o.revealed_ids if i not in valid]
             return f"revealed_ids {bad} are not in the requirement list" if bad else None
 
+        # D099: drop hallucinated ids instead of skipping scenario
         parsed, ids, err = self._call("reveal_check", {"utterance": utterance, "constraints_json": items},
-                                      RevealOutput, check, seed, ctx=ctx)
+                                      RevealOutput, check, seed, ctx=ctx,
+                                      on_exhausted=lambda o, e: o)
+        revealed = sorted(set(parsed.revealed_ids) & valid) if parsed is not None else []
+        dropped = sorted(set(parsed.revealed_ids or []) - valid) if parsed is not None else []
+        flags = [f"reveal_check_hallucinated_id_dropped:{i}" for i in dropped]
         if parsed is None:
-            return LLMResult(None, ids, [self._flag("reveal_check", err or "")])
-        return LLMResult(sorted(set(parsed.revealed_ids)), ids)
+            flags.append(self._flag("reveal_check", err or ""))
+            return LLMResult(None, ids, flags)
+        return LLMResult(revealed, ids, flags)
 
     def claim_check(self, utterance: str, evidence: list[EvidenceSnippet], seed: Optional[int] = None,
                     ctx: Optional[ConversationContext] = None) -> LLMResult[Optional[list[ClaimItem]]]:
