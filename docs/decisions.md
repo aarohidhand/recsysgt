@@ -1301,3 +1301,6 @@ Two real data shapes were rejected by the reframe value check:
 
 ## D091 REVERSAL (2026-11-04)
 **Reverted.** merge_cheapest_points bypassed the front’s own already-minimal, joint-gain-ranked bundle search (CLAUDE.md §1.4 / front.py docstring), unconditionally forcing 2 items into every proposal. This caused the buyer to evaluate multiple relaxations per turn (a correct behavior triggered by an incorrect cause) and broke the existing calibration/simulator expectations. The reference policy (single cheapest useful relaxation point) is restored; legacy tests and live runs use that path again.
+
+## D096 — First-call retry: normal 8s ladder for a 502, minute-wait only for connection failures
+**Reverses a3d3344's over-correction.** A flat 60-second retry on the very first physical call was wrong: an ordinary 502/500/429 (already handled by the normal `backoff_s` ladder) got the minute treatment, and the wrapper also accidentally re-triggered on every later call because it didn't check `gate.count`. Replaced with the same ladder (`backoff_s`) for any bad status; only a true network/connection error (`httpx.RequestError`: DNS/connect/timeout) uses the full minute wait, and only when `gate.count == 1`. Same `FatalHTTP` result when retries exhaust — just reached the right way.

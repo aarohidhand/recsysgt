@@ -286,10 +286,26 @@ def _menu_for(constraints, candidates, ctx, cfg, bounds, unit, diagnostic, overr
 
 def agrees_with_reference(menu: Menu, chosen_index: Optional[int]) -> Optional[bool]:
     """True iff the negotiator chose the reference (cheapest) point; None if there is nothing to choose."""
+
     if menu.reference_index is None or chosen_index is None:
         return None
     return chosen_index == menu.reference_index
 
+
+
+def second_point(points: Sequence[MenuPoint], first: MenuPoint, max_items: int) -> Optional[MenuPoint]:
+    """Cheapest OTHER point whose changed rules are disjoint from ``first`` and that together fit ``max_items``."""
+    first_refs = {c["ref"] for c in first.changes}
+    for p in points:
+        if p.index == first.index:
+            continue
+        refs = {c["ref"] for c in p.changes}
+        if refs & first_refs:
+            continue
+        if len(first_refs | refs) > max_items:
+            continue
+        return p
+    return None
 
 def diagnostic_front(constraints: Sequence[ConstraintT], candidates: Sequence[CandidateView], ctx: EvalContext,
                      cfg: RelaxConfig, bounds: Optional[Bounds] = None, *, unit: str = "supplier",

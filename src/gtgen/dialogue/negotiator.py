@@ -38,8 +38,8 @@ from gtgen.llm import (
 )
 from gtgen.matching import (
     EvalContext, agrees_with_reference, apply_levels, baseline_levels, belief_role_reasons, build_menu, build_rules,
-    config_from_settings, feasible_ids as _feasible_ids, role_aware_gain, synthetic_normalised,
-    tighten,
+    config_from_settings, feasible_ids as _feasible_ids, role_aware_gain, second_point, synthetic_normalised,
+    tighten, cost_of,
 )
 from gtgen.matching.evidence import parse_number_unit
 from gtgen.matching.states import ADJACENCY, norm_state
@@ -763,7 +763,7 @@ class Negotiator:
 
     def _propose(self, transcript: TranscriptView, catalogue: CatalogueView, beliefs: list[BelievedConstraint],
                  current: list[BelievedConstraint], rules: list, base: dict[str, int], ectx: EvalContext, menu, mp,
-                 seed: int, ids: list[str], ctx: ConversationContext) -> NegotiatorStep:
+                 seed: int, ids: list[str], ctx: ConversationContext, mp2=None) -> NegotiatorStep:
         cands = catalogue.candidates
         by_rule = {r.ref: r for r in rules}
         by_belief = {b.belief_id: b for b in beliefs}
@@ -800,9 +800,10 @@ class Negotiator:
                                      from_value=ch["current_value"], to_value=ch["new_value"], base=base[ref],
                                      level=ch["level"], levels=tuple(float(x) for x in rule.levels),
                                      rule=rule if is_state else None, state_text=spoken))
-        bundle = RelaxationBundle(items=items, joint_gain=max(0, mp.gain.gain_products),
-                                  feasible_after=len(mp.gain.after), gained_product_ids=list(mp.gain.gained),
-                                  total_normalised_cost=min(1.0, mp.cost))
+        combined = role_aware_gain(beliefs, cands, ectx, rules=rules, levels_before=base, levels_after=running)
+        bundle = RelaxationBundle(items=items, joint_gain=max(0, combined.gain_products),
+                                  feasible_after=len(combined.after), gained_product_ids=list(combined.gained),
+                                  total_normalised_cost=min(1.0, float(cost_of(rules, running))))
         view = MenuPointView(items=views)                # D065: extra_options (candidate gain) is NOT passed to the LLM
         evidence = self._evidence(catalogue, list(mp.gain.gained))
         reply, rids = guarded_call(self._runners.negotiator_reply, "negotiator_reply", (STUB_REPLY, []),
@@ -915,9 +916,11 @@ class Negotiator:
             return self._best_available_step(transcript, catalogue, beliefs, current, cells, ectx, ids,
                                              wrapped_up=False)
         mp = menu.reference()
+        mp2 = second_point(menu.points, mp, self._cfg.max_items) if self._cfg.max_concurrent_points > 1 else None
         self.last_analysis["chosen_point"] = mp.to_dict()
+        self.last_analysis["second_point"] = mp2.to_dict() if mp2 else None
         self.last_analysis["agrees"] = agrees_with_reference(menu, mp.index)
-        return self._propose(transcript, catalogue, beliefs, current, rules, base, ectx, menu, mp, seed, ids, ctx)
+        return self._propose(transcript, catalogue, beliefs, current, rules, base, ectx, menu, mp, seed, ids, ctx, mp2=mp2)
 
     def _attempt_ledger(self, current: list[BelievedConstraint], rules: list, in_menu: set[str],
                         bounds: dict[str, dict[str, int]]) -> dict[str, dict[str, str]]:

@@ -121,6 +121,7 @@ negotiation:
   min_shortlist: 3
   max_turns_hard_cap: 20
   max_bundle_size: 4
+  max_concurrent_points: 2          # D095: up to 2 independent relaxation points per turn
 
   min_marginal_gain: 1
   numeric_relaxation_steps: distinct_candidate_values

@@ -40,8 +40,9 @@ from gtgen.matching.buyer_decision import (
     params_from_persona, v_signal,
 )
 from gtgen.matching.front import (
+    cost_of,
     FrontPoint, FrontTooLarge, Menu, MenuPoint, NeedTables, agrees_with_reference, build_menu, diagnostic_front,
-    front, need_tables, reachable_suppliers,
+    front, need_tables, reachable_suppliers, second_point,
 )
 from gtgen.matching.gain import (
     EvalContext, GainResult, counter_gain, feasible_ids, feasible_set, gain_between, role_aware_gain,
@@ -60,7 +61,7 @@ __all__ = [
     "RelaxRule", "RelaxState", "SimulationResult", "accept_probability", "agrees_with_reference", "apply_decision",
     "apply_levels", "baseline_levels", "build_menu", "build_rules", "buyer_decide", "buyer_rng", "check_change",
     "config_from_settings", "counter_gain", "diagnostic_front", "domain_levels", "feasible_ids", "feasible_set",
-    "front", "gain_between", "level_target", "may_relax", "need_tables",
+    "front", "gain_between", "level_target", "may_relax", "need_tables", "second_point", "cost_of",
     "params_from_persona", "proposal_items",
     "reachable_suppliers", "relaxed_constraint", "role_aware_gain", "simulate_negotiation", "tighten",
     "v_signal", "validate_transition", "added_states", "is_monotone", "is_state_rule", "state_level_for",

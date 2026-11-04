@@ -200,16 +200,27 @@ def cmd_pilot(args: argparse.Namespace) -> None:
         counted = httpx.post
 
         def first_call_guard(*a, **kw):
-            for attempt in range(3):
-                r = counted(*a, **kw)
+            if gate.count != 1:
+                return counted(*a, **kw)
+            first_call_backoff_s = [float(x) for x in settings["llm"]["http_retry"]["backoff_s"]]
+            last = None
+            for wait in [0.0] + first_call_backoff_s:
+                if wait:
+                    import time
+                    time.sleep(wait)
+                try:
+                    r = counted(*a, **kw)
+                except httpx.RequestError as exc:
+                    import time
+                    time.sleep(60)
+                    last = None
+                    continue
                 if r.status_code == 200:
                     return r
-                if gate.count == 1 and attempt < 2:
-                    import time
-                    time.sleep(60)  # minute-interval retry for first live call
-            if gate.count == 1 and r.status_code != 200:
-                raise FatalHTTP(f"first live call failed: HTTP {r.status_code}: {r.text[:800]}")
-            return r
+                last = r
+            if last is None:
+                raise FatalHTTP("first live call never connected after retries (network/connection error)")
+            raise FatalHTTP(f"first live call failed: HTTP {last.status_code}: {last.text[:800]}")
         httpx.post = first_call_guard
 
     n_scenarios = len(bids) * n_personas       # D060: strata are drawn over the whole run
