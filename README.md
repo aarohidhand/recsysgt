@@ -65,7 +65,20 @@ my-data-folder/
 `data/canonical/` parquet files are used by some analysis/coverage tools, but the live pilot reads
 the raw CSVs. `data/raw/` is the default folder; `data/canonical/` is the default canonical path.
 
-### `bids.txt` — optional allowlist
+### ### Persona count per product category
+
+`gtgen.llm.strata.personas_for_category` picks the number of persona sub-bands from the bid's `product_category`:
+
+| Category match | Personas |
+|---|---|
+| `blanket` / `pump` (e.g. Submersible Pump) | 1 |
+| `cable` / `transformer` / `valve` / `sluice` (e.g. Submersible Cable, Sluice Valve) | 2 |
+| `office bag` / `laptop` (e.g. Laptop / Office Bag) | 3 |
+| Everything else (uncatalogued, e.g. DI Fittings) | 1 |
+
+The runner passes `--personas 1` by default (`scripts/live_all_bids.sh`); the category still selects the tau sub-bands inside `build_scenario()` via `personas_for_category`. Use more bids if you need more conversations.
+
+`bids.txt` — optional allowlist
 
 `bids.txt` contains **one full bid id per line**:
 
