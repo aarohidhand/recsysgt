@@ -22,7 +22,8 @@ Authoritative inputs (read before any data or schema work):
    Confirmed by the user (2026-10-26).
 2. **Canonical columns only.** Loaders select exactly the retained headers in section 4 of the
    canonical guide. Join keys: `gem_bids_metadata.bid_number` ↔ `final_constraints.bid_id` ↔
-   `products.gem_bid_id`; `product_id`; `supplier_id`. Names are never join keys. Newer exports
+   `products.gem_bid_id`; `product_id`; `supplier_id`. Names are never join keys. D106: a bid with no
+   `products.csv` row takes its candidates from the `supplier_products.csv` links (link columns only). Newer exports
    may explode a retained JSON column into `<column>.<key>` headers (and carry the constraint list
    under `constraints`); the loader reconstructs the canonical JSON-object column, so downstream
    contracts see the same schema for both layouts.

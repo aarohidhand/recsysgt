@@ -16,6 +16,11 @@ The following files are intentionally excluded from this guide:
 `supplier_products.csv`, `bid_constraints.csv`, and
 `matching_constraints.csv`.
 
+**Amendment D106 (2026-11-07, user):** one exception. When `products.csv` has no row for a bid,
+the loader reads the bid -> product links from `supplier_products.csv` (columns `gem_bid_id`,
+`product_id`, `supplier_id` only) and takes those products from `products.csv`. See
+`docs/decisions.md` D106.
+
 This guide records decisions based on the current files and their
 present relationships. It does not add a future implementation plan.
 Where a field is constant, empty, or currently carries no

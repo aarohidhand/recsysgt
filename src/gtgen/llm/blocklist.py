@@ -37,6 +37,13 @@ def find_government_terms(text: Optional[str], terms: Iterable[str]) -> list[str
     return [t for t in terms if _term_regex(t).search(text)]
 
 
+def remove_government_terms(text: str, terms: Iterable[str]) -> str:
+    """``text`` with every blocklist term cut out and the spaces collapsed (D109: labels built from attribute names)."""
+    for t in terms:
+        text = _term_regex(t).sub(" ", text)
+    return " ".join(text.split())
+
+
 _SNAKE = re.compile(r"(?<![A-Za-z0-9_/.])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![A-Za-z0-9_])")
 _INTERNAL_PHRASES = re.compile(
     r"\b(?:budget[\s_-]+inr|qty[\s_-]+vs[\s_-]+moq|preferred[\s_-]+states|p[\s_-]+feasible|match[\s_-]+original|"

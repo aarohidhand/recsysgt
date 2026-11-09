@@ -390,6 +390,18 @@ def test_persona_v3_values_inside_range_are_untouched_and_low_side_clamped():
     assert per.tolerance == {"PRODUCT": 0.0, "QUALITY": 1.25, "LOCATION": 0.0}
 
 
+def test_persona_v3_with_no_allowed_terms_ignores_copied_example_terms():
+    # a 1-candidate pool makes every band degenerate; the model still copies the three example terms from the prompt
+    no_terms = {"terms": {}, "omitted": {"budget_inr": "degenerate band (lo == hi at the configured percentiles)",
+                                         "qty_vs_moq": "degenerate band (lo == hi at the configured percentiles)",
+                                         "preferred_states": "fewer than 2 distinct states in the pool (1)"}}
+    r, fc = R(json.loads(json.dumps(PERSONA_V3_OUT)))
+    res = r.persona("pump", 3, "units", None, ["PRODUCT", "QUALITY"], scenario_seed=11, scenario_id="s",
+                    tau_band=None, bands=no_terms, tightness_target=1, ctx=CTX)
+    assert res.ok and len(fc.calls) == 1
+    assert res.value[1].commercial_terms == {}
+
+
 def test_persona_v3_missing_tolerance_category_or_bad_sales_persona_retries_then_fails():
     def no_cat(p):
         p["tolerance"] = [{"category": "PRODUCT", "value": 1.0}]

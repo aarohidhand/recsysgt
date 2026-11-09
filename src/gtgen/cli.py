@@ -93,6 +93,9 @@ def prepare_bid(bid_id: str, settings: dict, runners) -> PreparedBid:
     logger.info("Loading catalogue view")
     catalogue = build_catalogue_view(bid_id, raw_dir, scenario_id=f"{scenario_id_base}_s0")
     logger.info("Catalogue: %d candidates", len(catalogue.candidates))
+    if not catalogue.candidates:      # nothing to negotiate over; skip before any LLM call (persona fails anyway)
+        from gtgen.llm import ScenarioSkipped
+        raise ScenarioSkipped("catalogue", "no candidate products for this bid")
 
     # most-common category_name (record_pilot.py's computation), not the first candidate's
     counts = collections.Counter(c.category_name for c in catalogue.candidates if c.category_name)

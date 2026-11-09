@@ -27,8 +27,23 @@ llm:
       - OPENROUTER_API_KEY_NEGOTIATOR
     buyer: *all_key_vars            # D086: dialogue calls otherwise wait 30-55 s on one account's token pacer
     negotiator: *all_key_vars
-  backend: openrouter               # openrouter | gemini_direct (D017)
+  backend: openrouter               # openrouter | gemini_direct (D017) | google; GTGEN_LLM_BACKEND overrides (live runs: .env sets google); mock fixtures are keyed on openrouter
   backends:                         # the active backend's `provider` block is sent as OpenRouter `provider`
+    google:                         # Google AI Studio directly: native generateContent, GEMINI_API_KEY for every role
+      api: gemini
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      model: gemma-4-26b-a4b-it     # https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api
+      api_key_env: GEMINI_API_KEY
+      structured_output: prompt_json   # schema in the prompt; JSON mode is not documented for Gemma on the Gemini API
+    nvidia:                         # D108 (user 2026-11-07, trial only): NVIDIA API catalog, OpenAI-style chat/completions
+      base_url: https://integrate.api.nvidia.com/v1
+      model: nvidia/nemotron-3-ultra-550b-a55b   # D108 test 2026-11-07; deepseek-ai/deepseek-v4.1-flash did not answer
+      api_key_env: NVIDIA_API_KEY
+      structured_output: prompt_json   # response_format support is not stated on the model page
+      disable_reasoning: false      # `reasoning` is an OpenRouter field; extra_body turns thinking off instead
+      extra_body: {chat_template_kwargs: {thinking: false}}   # verified on Nemotron 3 Ultra: 0 reasoning chars (D108)
+      rate_limit: {requests_per_minute: 40, min_interval_s: 1.5}   # UNVERIFIED: the model page states no limits
+      tpm_limit: null               # no tokens-per-minute limit stated; Google's pacer budget must not apply
     openrouter:                     # BYOK: route to Google AI Studio using your own key
       provider:
         order: ["google-ai-studio"] # D062: the only provider for the :free model
@@ -42,8 +57,8 @@ llm:
   # output is capped at 32,768 per request. Batching is the main defence against the 50 requests/day limit.
   # D068 (user, 2026-11-01; real Google AI Studio limits for Gemma 4 26B PER KEY): 30 rpm, 16K tokens/minute, 14.4K requests/day.
   # The binding limit is tokens per minute -> small batches + a per-key rolling token pacer. 262,144 context stays the hard ceiling.
-  tpm_limit: 16000                  # tokens per minute per API key (provider limit)
-  tpm_safety: 0.9                   # pacer budget = tpm_limit * tpm_safety (estimates are ~2x conservative; input + planned output counted)
+  tpm_limit: 8000                   # per process: 16000/key provider limit split over 2 concurrent runs on one key (2026-11-09 00:06 IST; 5300 for 3 runs); 16000 for one
+  tpm_safety: 0.9                   # pacer budget = tpm_limit * tpm_safety (estimates are ~2x conservative; input + planned output counted; google backend: input only, D105)
   token_limit_total: 262144         # hard endpoint limit, input + output combined
   max_tokens_per_call: 14000       # our budget (~8% headroom: the estimator is conservative and the smoke call showed ~2x over-estimate)
   max_completion_tokens: 8000       # hard output cap per request
@@ -57,11 +72,11 @@ llm:
   max_retries_final: 2              # D087: the closing turn has a deterministic safe fallback; don't burn 6 live retries on wording
   timeout_s: 600                    # long batched completions (up to 32k tokens) take minutes; a timeout would burn retries of the 50/day
   rate_limit:
-    requests_per_minute: 30
-    min_interval_s: 2.2             # 60/20 = 3.0 s plus margin; applies to every outgoing request
+    requests_per_minute: 15         # per process: 30/key split over 2 concurrent runs (2026-11-09 00:06 IST; 10 for 3 runs); 30 for one
+    min_interval_s: 4.4             # 2 x 2.2 for 2 concurrent runs on one key (2026-11-09 00:06 IST; 6.6 for 3 runs); 2.2 for one
   http_retry:                       # transport retries on 429 / 5xx / timeouts
-    max_attempts: 6                 # retries after the first try (user, 2026-10-31)
-    backoff_s: [8, 16, 24, 32, 40, 48]   # linear, multiples of 8 s; used when no Retry-After header is present
+    max_attempts: 12                # retries after the first try (D107, user 2026-11-07; was 6 from 2026-10-31)
+    backoff_s: [8, 16, 24, 32, 40, 48, 60, 90, 120, 120, 120, 120]   # D107: ~13 min in all, outlasts a Google HTTP 500 burst; used when no Retry-After header is present
     respect_retry_after: true
     max_retry_after_s: 300          # D067: provider retry hints (header, body retryDelay, 'retry in Ns') are honoured up to this; wait = max(linear, hint + margin)
     retry_after_margin_s: 5
@@ -256,6 +271,9 @@ framing:                            # D027: single blocklist for llm output chec
     - earnest money
     - ePBG
     - performance bank guarantee
+    - performance guarantee         # D109: Nemotron translated PBG clauses to this (2026-11-07)
+    - PBG                           # D109
+    - competent authority           # D109: land-border clause, Nemotron test 2026-11-07
     - bid security
     - MSE
     - MSME preference

@@ -1310,3 +1310,146 @@ Two real data shapes were rejected by the reframe value check:
 
 Fixed: `Negotiator._step()` removes the immediate `if nothing_verified: return BEST_AVAILABLE` and instead records the condition (`best_available_reason = "nothing_verified"`) at the exhaustion points (`wrap` or `not menu.points` / `menu.diagnostic`). The relaxation loop now runs fully; `BEST_AVAILABLE` only appears when the menu is genuinely exhausted (`loop_exhausted` or no reachable points), matching the semantics of `patience_exhausted` / `no_feasible`. The `buyer_decide` logic (counter-before-limit, D092) and `second_point` (D095) both remain unchanged; this fix is on the negotiator side only.
 Also raised `recommendation.best_available_k` from 3 to 5 (`config/settings.yaml`, `docs/decisions.md`).
+
+## D103 (2026-11-06): a bid with no candidate products is skipped before any LLM call
+`cli.prepare_bid` raises `ScenarioSkipped("catalogue", "no candidate products for this bid")` right after the catalogue
+loads. Before, such a bid spent about 24 requests and 22 minutes on reframe/persona retries and was skipped anyway (every
+commercial band is empty, see D104). Test: `tests/test_cli_skip.py`.
+
+## D104 (2026-11-06): no allowed commercial term means the persona picks are ignored, not checked
+When `commercial_bands` omits every term (degenerate pool, e.g. 1 candidate: lo == hi and fewer than 2 states), the only
+valid answer is `commercial_terms = {}`. The persona prompt's output example still lists all three terms and Gemma copies
+them, so the D049 "exactly the allowed terms" check failed 6 times and the scenario was skipped (live: GEM/2023/B/3363261).
+`LLMRunners.persona` now checks the picks only when at least one term is allowed and stores `{}` otherwise, the same
+as the `bands is None` path. A non-empty term set keeps the full D049 check. Prompt unchanged (no version bump, fixtures
+and cache keys stay valid). Test: `test_persona_v3_with_no_allowed_terms_ignores_copied_example_terms`.
+
+## D105 (2026-11-06): the google backend paces on input tokens only
+Google's rate-limit page lists "Tokens per minute (input) (TPM)" and "Rate limits are applied per project, not per API
+key" (https://ai.google.dev/gemini-api/docs/rate-limits). The D068 pacer also reserved the planned completion
+(`batch_completion_target`, 3000) for every call, so a call that sends about 2600 input tokens reserved about 6300 and
+each run waited about 30 s before most calls. For a backend with `api: gemini`, the pacer now reserves only the input
+estimate. OpenRouter pacing is unchanged. Test: `test_google_pacer_reserves_input_tokens_only`.
+
+## D106 (2026-11-07, user): a bid with no products.csv rows takes its candidates from supplier_products.csv links
+`products.csv` keeps each product once, under the first bid it was found for (`gem_bid_id`); `supplier_products.csv` holds
+every bid -> product link. A bid whose search found only products already stored under an earlier bid had 0 candidates
+and was skipped (D103): 139 of the 300 bids 301-600 in `data 2/raw/bid.txt` (e.g. 15 "Blanket for CAPFs" bids share the
+same listings). All 854 linked products of those bids are in `products.csv`, and `supplier_id` agrees on every link.
+User decision: fallback only. `build_catalogue_view` reads the links (columns `gem_bid_id, product_id, supplier_id` only;
+`product_target`, `search_keyword`, `relevance_score` stay out, rule 5) only when `products.csv` has no row for the bid, and
+takes each product's `product_constraints` rows from its home bid, so each product keeps one copy of its evidence. A bid
+with `products.csv` rows is unchanged, so the 36 finished bids stay valid. Known limit: pools are not the same kind across
+bids (fallback bids get every link, median 38 per bid; other bids keep the first-found subset, median 11).
+A data folder without `supplier_products.csv` keeps the D103 skip. Tests: `tests/data/test_catalogue_links_d106.py`.
+
+## D107 (2026-11-07, user): 12 HTTP retries with waits up to 120 s (was 6, waits up to 48 s)
+From about 11:20 IST, Google's Gemma 4 endpoint returned HTTP 500 "Internal error encountered" for about half of all calls
+(about a quarter before). Most failures pass on the first retry (61%), but after 3 failures a call failed again 70-80% of
+the time, and 4 of 54 failed calls used all 7 attempts; each such call cost the whole bid (6 bids lost, 11:15-11:51 IST).
+`llm.http_retry.max_attempts` 6 -> 12 and `backoff_s` adds 60, 90, 120, 120, 120, 120 (about 13 min in all), so a call
+can outlast a burst of about 10 minutes. The D096 first-call guard uses the same `backoff_s` list. Settings are read at
+process start, so a running pilot takes the change from its next bid. Tests: `test_real_settings_schedule_is_twelve_retries_up_to_120s`,
+`test_429_gives_up_after_max_attempts_and_key_not_leaked`.
+
+## D108 (2026-11-07, user): optional NVIDIA API catalog backend (trial, not used by the runs); provenance names the real model
+The user asked if `deepseek-ai/deepseek-v4.1-flash` on build.nvidia.com can make the runs faster. Its page
+(https://build.nvidia.com/deepseek-ai/deepseek-v4.1-flash) shows an OpenAI-style API at `https://integrate.api.nvidia.com/v1`
+("This trial service is governed by the NVIDIA API Trial Terms of Service"). It states no rate limits, no `response_format`
+support, and no parameter that turns reasoning off.
+- `llm.backends.nvidia` (select with `GTGEN_LLM_BACKEND=nvidia`, key `NVIDIA_API_KEY`): prompt_json mode, no OpenRouter
+  fields (`provider`, `reasoning`), and its own `rate_limit` and `tpm_limit: null`. A backend block may now set `rate_limit`,
+  `tpm_limit`, `disable_reasoning`, and `extra_body` (fields merged into the OpenAI-style body). `extra_body` and the limits
+  are UNVERIFIED.
+- Smoke test 2026-11-07 about 17:40 IST: the key works (GET /models 200, 0.1 s). DeepSeek V4.1 Flash gave no response in
+  300 s and in 240 s (streamed), and `google/gemma-4-31b-it` gave none in 120 s. `nvidia/nemotron-3.5-lightning-30b-a3b`
+  answered in 0.4 s. NVIDIA does not serve `gemma-4-26b-a4b-it`. Result: no switch; the runs stay on Google Gemma (D062).
+  A switch would also mix two generators in one dataset, so it needs a new user decision.
+- Bug fixed: provenance `llm_model` / `llm_backend` came from `llm.model` / `llm.backend` (`google/gemma-4-26b-a4b-it:free`,
+  `openrouter`), while the live runs use `GTGEN_LLM_BACKEND=google` (`gemma-4-26b-a4b-it`). `client.active_llm(settings)` now
+  gives both values, and the client and `assemble_conversation` use it. Conversations written before this fix always
+  show `openrouter` and the `:free` model. `.env` has set `GTGEN_LLM_BACKEND=google` since 2026-11-06 01:00, so later runs
+  used Google; for older run folders, check their logs before you trust these two fields.
+- Test bid 2026-11-07 18:09 IST (user): GEM/2024/B/5129223, 1 persona, `nvidia/nemotron-3-ultra-550b-a55b`,
+  `chat_template_kwargs: {thinking: false}` (0 reasoning chars). 5 min 25 s, 21 calls, 0 HTTP errors, 0 validation
+  failures; Gemma took about 20 min on 1/3 of the Google quota (20 pacer waits, 3 HTTP 500, 1 validation failure).
+  Output in `out/gt_test/` (not in the dataset). Both conversations: 111 constraints, 2 turns, BEST_AVAILABLE
+  (nothing_verified), so the bid tests no negotiation. Framing decisions differ for 30 of 111 constraints. Nemotron
+  translated a government-only clause (land-border countries, "Competent Authority") that Gemma dropped, and the buyer
+  said it; Gemma kept "in line with terms of GeM". The government-term check flagged neither.
+- Negotiation test 2026-11-07 19:34-19:41 IST (user), 1 persona each, Gemma conversations from the same bids for comparison:
+  - GEM/2023/B/3831691: skipped at `persona` after 7 tries. Each try picked `preferred_states` "Gujarat", which is not in
+    the allowed options (Uttar Pradesh, West Bengal, Karnataka, Delhi), and the error feedback did not change it. Gemma has
+    0 such skips in 113 scenarios since 2026-11-06.
+  - GEM/2024/B/5002757: 2 min 32 s, 22 calls, 0 HTTP errors (Gemma: 13 min, 6 HTTP 500). Nemotron translated two
+    PBG clauses that Gemma dropped ("Performance guarantee submission ...", "Enhanced guarantee amount ... Repo rate + 4%"),
+    and the opening says "submission of performance guarantee". `negotiator_final` failed the government-term check 3
+    times ("MSE") and fell back to the template, and the template still says "payment terms mse days"
+    (`government_term:3:MSE`). Cause: `final_fallback_text` prints the `to_confirm` labels, which come from the attribute
+    name `payment_terms_mse_days`; the LLM gets the same label in its facts. Not fixed (no Gemma conversation has a
+    `government_term` flag yet).
+  - GEM/2024/B/5050409: 2 min 21 s, 14 calls, 0 HTTP errors (Gemma: 9 min, 1 HTTP 500). The negotiator said a 10 HP unit
+    at 31,975 per piece "fits within your 41,000 total for two units" (2 x 31,975 = 63,950). No check caught this.
+  - In both finished Nemotron conversations the buyer policy answered COUNTER on SOFT `preferred_states`, and the buyer
+    said "non-negotiable" / "our procurement policy specifies". The negotiator then believed the constraint HARD and closed
+    with BEST_AVAILABLE after 1 proposal. Gemma's buyers kept it soft, and Gemma's negotiators made 2 proposals.
+  Result: Nemotron is 4 to 5 times faster with no HTTP errors, but it has more rule-4 leaks, ignores an option list,
+  makes a false price claim, and voices SOFT counters as HARD. No switch.
+Tests: `tests/llm/test_nvidia_backend.py`.
+
+## D109 (2026-11-07, user): block the government wording found in the Nemotron tests (D108)
+- `framing.government_terms` adds `performance guarantee`, `PBG`, and `competent authority`. The reframe check already
+  rejects a `commercial_text` with a listed term, so the model must drop or reword those clauses (it retries; after
+  `llm.max_retries` the bid is skipped, D066). Every utterance check and the auditor flag use the same list (D027).
+- `negotiator_final`: the facts labels come from data attribute names (`payment_terms_mse_days` gave "payment terms mse
+  days"). `strip_government_words` (runners) cuts the listed terms out of every `met` / `unmet` / `to_confirm` label
+  before the LLM call, so the LLM and `final_fallback_text` get the same clean labels. A label left empty is dropped.
+  Product and supplier names are not changed. Other fallbacks that print attribute labels (proposal, ACKNOWLEDGE) are not
+  changed; `assemble` still flags any listed term in any turn (`government_term:<turn>:<term>`).
+- Takes effect for each new bid process, so the 3 live Gemma runs use it from 2026-11-07 about 20:05 IST.
+- Check run (user): Nemotron (`GTGEN_LLM_BACKEND=nvidia`) on `data 2/raw/bid.txt` bids 601-620, output `out/gt_nvidia/`,
+  logs `out/logs_nvidia_601/`. Not part of the Gemma dataset.
+- Check-run result (20:27-23:07 IST): 20/20 bids ok, 26 conversations, 0 skips, 0 failures; NVIDIA sent HTTP 429 in
+  14 of 20 bids, so the `rate_limit` guess (40 RPM) is too high. 0 `government_term` flags (D109 held). Against the Gemma
+  dataset (140 conversations, other bids): final-turn template fallback 38% vs 10%; a SOFT belief turned HARD in 42% vs
+  21% of conversations; buyer refusals with hard words ("non-negotiable", "policy") 8 of 14 vs 7 of 70; buyer accepted
+  1 of 15 proposals vs 34 of 104; mean top1_match_original 0.58 vs 0.79. Nemotron stays unused (D108).
+Tests: `tests/llm/test_d109_government_labels.py`.
+
+## D110 (2026-11-08, coordinator): the reframe retry names "drop" when a government term is the problem
+- Watcher skip 2026-11-08 03:13 IST: GEM/2024/B/5266713 (451-600 run) was skipped at reframe. A DOCUMENT constraint has
+  the value "Annexure 1.3/ Performa of Bank Guarantee for Security Deposit cum Performance Guarantee". Gemma copied
+  "Performance Guarantee" into `commercial_text` in all 7 tries; the retry only said "rewrite without them". This term
+  was added by D109, so D109 caused the skip.
+- Size: 358 of the 776 bids have one of the D109 terms in a value field the model sees (`buyer_value`, `allowed_values`,
+  `spec_name`, `condition`); mostly `competent authority` (342 constraints). After D109, 12 such bids finished: 9 ok,
+  1 skip on the term, 2 skips for other reasons.
+- Fix: when the reframe check finds a listed government term, the retry text adds: if the requirement only makes sense
+  in government procurement, set `framing_decision` to "drop". reframe.v2 already lists performance bank guarantee as
+  drop-only. The prompt file is not changed (no version bump, warm caches stay valid). Takes effect for each new bid
+  process from 2026-11-08 about 03:30 IST.
+- GEM/2024/B/5266713 is added to `out/rerun_http.txt` for a rerun with the fix.
+Tests: `tests/llm/test_d109_government_labels.py::test_reframe_retry_after_a_government_term_offers_drop`.
+
+## D111 (2026-11-08, coordinator): the reframe value check (D066) accepts worded ranges, number words and blocked labels
+- 4 bids were skipped at reframe because the value check rejected texts that state the value (the real texts are in
+  `.cache/llm`):
+  - GEM/2024/B/4825544: allowed value "1001-1250", text "Capacity should be between 1001 and 1250 ml." The range rule
+    did not know hyphen ranges.
+  - GEM/2024/B/5528492: buyer_value "1", unit "sample", text "One sample is required." Only digits counted.
+  - GEM/2024/B/5542314: allowed value "31.00 to 32.69 (as per IS 744)", text "... should be 31.00 to 32.69 Micron."
+    The range rule needed every number, also the standard number 744.
+  - GEM/2023/B/4142698: allowed value "Bidder’s Compliance / Comment (YES/No)" (a tender form label), text "Confirm
+    acceptance of all technical specifications with YES/No." The descriptive fallback used the first 3 words, and the
+    first word "Bidder" is blocked (D109), so the text could never hold it.
+- Fix in `reframe_value_problem` (`src/gtgen/llm/runners.py`), the user approved it 2026-11-08 18:10 IST:
+  - "A to B" and "A-B" ranges are met when the text has both end numbers.
+  - A digit 0-10 is also met by its word ("one" for 1).
+  - The descriptive fallback removes the government terms from the value before it takes the words.
+  - When an allowed value holds a government term, the retry text adds the D110 "drop" hint.
+- The check only accepts more texts. No prompt changed (no version bump, warm caches stay valid). A cached answer
+  that was rejected before can now pass, so a rerun can reuse it. Takes effect for each new bid process from
+  2026-11-08 about 18:15 IST.
+- Not changed: the descriptive fallback still accepts a value when any of its first 3 long words occurs in the text
+  (for example "per" from "as per IS 744"). It is lenient, but no skip came from it.
+Tests: `tests/llm/test_d111_reframe_value_check.py`.

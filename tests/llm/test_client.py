@@ -398,9 +398,10 @@ def test_backoff_uses_settings_in_order(
     assert fake_clock.sleeps == [8.0, 16.0]
 
 
-def test_real_settings_schedule_is_linear_8s_six_retries() -> None:
-    assert _REAL_HTTP_RETRY["max_attempts"] == 6
-    assert [float(x) for x in _REAL_HTTP_RETRY["backoff_s"]] == [8, 16, 24, 32, 40, 48]
+def test_real_settings_schedule_is_twelve_retries_up_to_120s() -> None:
+    # D107 (user, 2026-11-07): 6 -> 12 retries so a call outlasts a ~10-minute Google HTTP 500 burst
+    assert _REAL_HTTP_RETRY["max_attempts"] == 12
+    assert [float(x) for x in _REAL_HTTP_RETRY["backoff_s"]] == [8, 16, 24, 32, 40, 48, 60, 90, 120, 120, 120, 120]
     assert _REAL_HTTP_RETRY["max_retry_after_s"] == 300 and _REAL_HTTP_RETRY["respect_retry_after"] is True
 
 
@@ -421,8 +422,8 @@ def test_429_gives_up_after_max_attempts_and_key_not_leaked(
     with caplog.at_level("DEBUG"):
         with pytest.raises(LLMNetworkError) as ei:
             c._api_call(MESSAGES, 0.1, 1, SampleResponse)
-    assert n["calls"] == 7  # 1 + max_attempts(6) retries; the 7th failure raises
-    assert fake_clock.sleeps == [8.0, 16.0, 24.0, 32.0, 40.0, 48.0]
+    assert n["calls"] == 13  # 1 + max_attempts(12) retries; the 13th failure raises
+    assert fake_clock.sleeps == [8.0, 16.0, 24.0, 32.0, 40.0, 48.0, 60.0, 90.0, 120.0, 120.0, 120.0, 120.0]
     assert "sk-test-secret" not in str(ei.value)
     assert "sk-test-secret" not in caplog.text
     assert "waiting 8.0s" in caplog.text

@@ -19,4 +19,6 @@ testpaths = [
     "tests/llm/test_d054_live.py",
     "tests/llm/test_api_keys.py",
     "tests/dialogue/test_d088.py",
+    "tests/llm/test_google_backend.py",
+    "tests/test_cli_skip.py",
 ]

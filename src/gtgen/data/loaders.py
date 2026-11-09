@@ -75,6 +75,9 @@ _PRODUCT_CONSTRAINTS_COLS = [
     "raw_text_verified", "confidence", "source_field",
 ]
 
+# D106: only the link columns; product_target, search_keyword, relevance_score are bid-derived and stay out.
+_SUPPLIER_PRODUCTS_LINK_COLS = ["gem_bid_id", "product_id", "supplier_id"]
+
 _PRODUCTS_WITH_CONSTRAINTS_COLS = [
     "product_id", "product_url", "product_name", "supplier_id",
     "supplier_name", "supplier_url", "supplier_website_url", "category_name",
@@ -397,6 +400,14 @@ def load_product_constraints(raw_dir: str) -> pd.DataFrame:
     return _read_csv(raw_dir, "product_constraints.csv", _PRODUCT_CONSTRAINTS_COLS)
 
 
+def load_supplier_product_links(raw_dir: str, bid_id: str) -> pd.DataFrame:
+    """D106: the bid -> product links of *bid_id* from supplier_products.csv (link columns only; empty if no file)."""
+    if not (Path(raw_dir) / "supplier_products.csv").exists():
+        return pd.DataFrame(columns=_SUPPLIER_PRODUCTS_LINK_COLS)
+    df = _read_csv(raw_dir, "supplier_products.csv", _SUPPLIER_PRODUCTS_LINK_COLS)
+    return df[df["gem_bid_id"] == bid_id]
+
+
 def load_products_with_constraints(raw_dir: str) -> pd.DataFrame:
     """Load products_with_constraints.csv with canonical columns only."""
     return _read_csv(raw_dir, "products_with_constraints.csv",
@@ -484,15 +495,23 @@ def build_catalogue_view(
     bid_id: str, raw_dir: str, scenario_id: str,
 ) -> CatalogueView:
     """Build a CatalogueView for *bid_id*. Excludes bid-derived fields and gst_number."""
-    products_df = load_products(raw_dir)
-    products_df = products_df[products_df["gem_bid_id"] == bid_id]
+    all_products = load_products(raw_dir)
+    products_df = all_products[all_products["gem_bid_id"] == bid_id]
+    pc_df = load_product_constraints(raw_dir)
+    if products_df.empty:
+        # D106: products.csv keeps each product under its first bid only; supplier_products.csv links every bid.
+        # shortcut: fallback bids get every link, others only first-found products; use links for all bids if pools must match.
+        linked = set(load_supplier_product_links(raw_dir, bid_id)["product_id"].astype(str))
+        products_df = all_products[all_products["product_id"].astype(str).isin(linked)]
+        # Evidence stays with the product's own (home-bid) rows, so each product keeps one copy.
+        home = set(zip(products_df["product_id"].astype(str), products_df["gem_bid_id"].astype(str)))
+        pc_df = pc_df[[k in home for k in zip(pc_df["product_id"].astype(str), pc_df["gem_bid_id"].astype(str))]]
+    else:
+        pc_df = pc_df[pc_df["gem_bid_id"] == bid_id]
 
     suppliers_df = load_suppliers(raw_dir)
     # Drop gst_number before any join — it must never leave the data layer
     suppliers_df = suppliers_df.drop(columns=["gst_number"], errors="ignore")
-
-    pc_df = load_product_constraints(raw_dir)
-    pc_df = pc_df[pc_df["gem_bid_id"] == bid_id]
 
     # Join products with suppliers on supplier_id
     merged = products_df.merge(

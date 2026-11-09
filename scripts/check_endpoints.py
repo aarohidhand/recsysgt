@@ -16,8 +16,20 @@ for line in (ROOT / ".env").read_text().splitlines():
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
 cfg = yaml.safe_load((ROOT / "config/settings.yaml").read_text())["llm"]
-backend = cfg["backends"][cfg.get("backend", next(iter(cfg["backends"])))] if "backends" in cfg else {}
+backend = cfg["backends"][os.environ.get("GTGEN_LLM_BACKEND") or cfg.get("backend", next(iter(cfg["backends"])))] if "backends" in cfg else {}
 provider = backend.get("provider") or {"order": ["google-ai-studio"], "allow_fallbacks": False}
+if backend.get("api") == "gemini":       # direct Google backend: one key, native generateContent
+    env = backend["api_key_env"]
+    key = os.environ.get(env, "")
+    if not key or "REPLACE_ME" in key:
+        print(f"google      {env}: NOT SET")
+        sys.exit(1)
+    r = httpx.post(f"{backend['base_url']}/models/{backend['model']}:generateContent", timeout=120,
+                   headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                   json={"contents": [{"role": "user", "parts": [{"text": "Reply with the single word: ok"}]}],
+                         "generationConfig": {"maxOutputTokens": 20, "thinkingConfig": {"thinkingLevel": "minimal"}}})
+    print(f"google      {env}: HTTP {r.status_code} {'ok' if r.status_code == 200 else r.text[:200]}")
+    sys.exit(0 if r.status_code == 200 else 1)
 roles = {"default": cfg["api_key_env"], **cfg["api_key_roles"]}
 bad = 0
 for role, env in roles.items():

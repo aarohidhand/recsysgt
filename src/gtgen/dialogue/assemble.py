@@ -9,6 +9,7 @@ from typing import Iterable, Optional, get_args
 
 from gtgen.contracts import BestAvailable, FinalOutcome, GTConversation
 from gtgen.llm import find_government_terms, government_terms
+from gtgen.llm.client import active_llm
 from gtgen.llm.prompts import PROMPT_NAMES, load_prompt
 from gtgen.matching import match_original, perfect_deal
 from gtgen.matching.recommend import best_available, negotiated
@@ -144,6 +145,7 @@ def assemble_conversation(dialogue_state: DialogueState, run_id: str, settings: 
         for term in find_government_terms(t.utterance, terms):
             flags.append(f"government_term:{t.turn_idx}:{term}")
 
+    llm_backend, llm_model = active_llm(settings)   # D108: what really ran (GTGEN_LLM_BACKEND), not file defaults
     provenance = {
         "run_id": run_id,
         "scenario_id": brief.scenario_id,
@@ -152,8 +154,8 @@ def assemble_conversation(dialogue_state: DialogueState, run_id: str, settings: 
         "tau_band": list(persona.tau_band) if persona.tau_band else None,
         "settings_hash": settings_hash(settings),
         "prompt_versions": prompt_versions(),
-        "llm_model": settings.get("llm", {}).get("model"),
-        "llm_backend": settings.get("llm", {}).get("backend"),
+        "llm_model": llm_model,
+        "llm_backend": llm_backend,
         "persona_llm_call_id": persona.llm_call_id,
         "profile_llm_call_id": profile.llm_call_id,
         "alignment_llm_call_ids": _dedup(a.llm_call_id for a in ds.alignments),

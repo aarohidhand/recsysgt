@@ -16,7 +16,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Optional, Type, TypeVar
+from typing import Any, Callable, Generic, Iterable, Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ from gtgen.contracts import (
 from .batching import PlannedBatch, plan_batches
 from .blocklist import (
     NegotiatorInputError, assert_negotiator_safe, government_terms, stat_word_problem, supplier_stats_problem,
-    internal_name_problem, utterance_problem,
+    find_government_terms, internal_name_problem, remove_government_terms, utterance_problem,
 )
 from .claims import maybe_claims, verify_quote
 from .client import estimate_messages_tokens, estimate_tokens, schema_text
@@ -345,6 +345,19 @@ def scrub_supplier_stat_labels(facts: dict) -> dict:
                 o2[k] = [humanise_label(x) for x in o2[k]
                          if not (isinstance(x, str) and (_STAT_LABEL.search(x) or supplier_stats_problem(x)))]
         out["options"].append(o2)
+    return out
+
+
+def strip_government_words(facts: dict, terms: list[str]) -> dict:
+    """D109: fact labels come from data attribute names (payment_terms_mse_days -> "payment terms mse days"), so the
+    blocklist words are cut from them; neither the LLM nor the template fallback can then speak one (rule 4)."""
+    def clean(labels: list) -> list:
+        return [y for y in (remove_government_terms(x, terms) if isinstance(x, str) else x for x in labels) if y]
+    out = dict(facts)
+    if isinstance(out.get("to_confirm"), list):
+        out["to_confirm"] = clean(out["to_confirm"])
+    out["options"] = [{**o, **{k: clean(o[k]) for k in _LABEL_LISTS if isinstance(o.get(k), list)}}
+                      for o in facts["options"]]
     return out
 
 
@@ -791,11 +804,18 @@ def reveal_answer_problem(text: str, requirement_texts: list[str], last_question
     return None
 
 
-def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[str]:
+_DROP_HINT = '; if the requirement only makes sense in government procurement, set framing_decision to "drop"'
+_NUM_WORDS = dict(enumerate("zero one two three four five six seven eight nine ten".split()))
+# D111: "A to B" / "A-B" is a range of its two end numbers; a standard number such as "(as per IS 744)" is not part of it.
+_RANGE_PAIR = re.compile(r"(\d+(?:\.\d+)?)\s*(?:to|-|–)\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def reframe_value_problem(c: BuyerConstraint, text: Optional[str], terms: Iterable[str] = ()) -> Optional[str]:
     """Error text when a KEEP/TRANSLATE commercial_text omits the constraint's value(s), else None.
 
     A constraint with allowed_values (or a numeric buyer_value) must have them stated: 'Cable size is in Sqmm.'
-    (unit only) is rejected. More than 5 numeric allowed values may be summarised as a range, but with numbers."""
+    (unit only) is rejected. More than 5 numeric allowed values may be summarised as a range, but with numbers.
+    ``terms`` (the government blocklist) are words the text can never hold, so the check never asks for them (D111)."""
     def norm(s: str) -> str:
         # Whitespace around punctuation is not part of the value: "2,3,4" and "2, 3, 4" are the same.
         return re.sub(r"\s*([,;:/])\s*", r"\1", s)
@@ -805,7 +825,10 @@ def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[s
     bv = (c.buyer_value or "").strip()
 
     def has(tok: str) -> bool:
-        return re.search(r"(?<![\w.])" + re.escape(norm(tok)) + r"(?![\w]|\.\d)", t, re.I) is not None
+        pat = re.escape(norm(tok))
+        if re.fullmatch(r"\d+", tok) and int(tok) in _NUM_WORDS:
+            pat += "|" + _NUM_WORDS[int(tok)]                 # D111: "One sample is required." states 1
+        return re.search(r"(?<![\w.])(?:" + pat + r")(?![\w]|\.\d)", t, re.I) is not None
 
     def is_num(x: str) -> bool:
         return re.fullmatch(r"-?\d+(\.\d+)?", x) is not None
@@ -823,25 +846,29 @@ def reframe_value_problem(c: BuyerConstraint, text: Optional[str]) -> Optional[s
             return None
         # GEM/2019/B/242710: an allowed value can itself be an inequality range
         # (">= 1.10 & < 1.15").  The model writes "between 1.10 and 1.15"; accept that
-        # when every number in the range appears in the text.
+        # when every number in the range appears in the text.  D111: or when both end numbers of an
+        # "A to B" / "A-B" range do ("1001-1250" -> "between 1001 and 1250"; "31.00 to 32.69 (as per IS 744)").
+        tn = numbers_in(t)
         for a in av:
-            if re.search(r"[<>]=?|\bbetween\b|\bto\b", a, re.I):
+            if re.search(r"[<>]=?|\bbetween\b|\bto\b", a, re.I) or _RANGE_PAIR.search(a):
                 wanted = numbers_in(a)
-                if wanted and wanted <= numbers_in(t):
+                if (wanted and wanted <= tn) or any({float(x), float(y)} <= tn for x, y in _RANGE_PAIR.findall(a)):
                     return None
         # Fallback for long descriptive allowed-value lists (e.g. "Bronze grade LTB 2 of IS 318").
         # If the model states the category/grade (first two words) or any number from the value,
         # accept rather than aborting the scenario.
         for a in av:
             if len(a) > 10:
+                a = remove_government_terms(a, terms)     # D111: "Bidder’s Compliance (YES/No)" -> "Compliance (YES/No)"
                 words = [w for w in re.split(r"[^\w]+", a) if len(w) > 2 and w.lower() not in ("of","is","to","or","and")]
                 if words and any(w.lower() in t.lower() for w in words[:3]):
                     return None
                 nums = numbers_in(a)
                 if nums and nums <= numbers_in(t):
                     return None
-        return ("it must state the required value(s), not only the attribute or unit; include at least one of "
-                f"{av[:6]} (or a numeric range if there are more than 5)")
+        msg = ("it must state the required value(s), not only the attribute or unit; include at least one of "
+               f"{av[:6]} (or a numeric range if there are more than 5)")
+        return msg + _DROP_HINT if find_government_terms(" ".join(av), terms) else msg
     if bv and is_num(bv) and not has(bv):
         return f"it must state the required value {bv} {c.unit or ''}".rstrip()
     return None
@@ -1256,9 +1283,12 @@ class LLMRunners:
                 for it in o.items:
                     hit = utterance_problem(it.commercial_text, self.terms) if it.commercial_text else None
                     if hit:
+                        if find_government_terms(it.commercial_text, self.terms):
+                            # D110: a value text can hold the term itself; name the way out the prompt allows.
+                            hit += _DROP_HINT
                         return f"item idx {it.idx} commercial_text: {hit}"
                     if it.framing_decision in ("keep", "translate"):
-                        miss = reframe_value_problem(constraints[batch[it.idx]], it.commercial_text)
+                        miss = reframe_value_problem(constraints[batch[it.idx]], it.commercial_text, self.terms)
                         if miss:
                             return f"item idx {it.idx} commercial_text: {miss}"
                 return None
@@ -1385,7 +1415,7 @@ class LLMRunners:
                 variables["avoid_guidance"] = self._avoid_guidance(avoid_profiles)
 
         def check(o: PersonaOutput) -> Optional[str]:
-            if bands is not None:
+            if terms_spec:      # no allowed term (degenerate pool): nothing to pick, any copied example picks are dropped below
                 bad = self._picks_problem(self._clean_picks(o.commercial_terms), terms_spec)  # type: ignore[attr-defined]
                 if bad:
                     return bad
@@ -1458,7 +1488,7 @@ class LLMRunners:
             counter_band=parsed.counter_band, patience_turns=parsed.patience_turns,
             max_concessions_per_turn=parsed.max_concessions_per_turn,
             ranking_weights={k: w[k] / total for k in self.weight_keys},
-            commercial_terms=self._clean_picks(parsed.commercial_terms) if bands is not None else {},  # type: ignore[attr-defined]
+            commercial_terms=self._clean_picks(parsed.commercial_terms) if terms_spec else {},  # type: ignore[attr-defined]
             strata=strata or {}, llm_call_id=cid, **relax)
         return LLMResult((profile, persona), ids, extra=extra)
 
@@ -1823,7 +1853,8 @@ class LLMRunners:
         rendered as one readable "Name: style. approach" line; a ready string is also accepted."""
         self._need_sales_persona(sales_persona, "negotiator_final")
         variables = build_negotiator_final_variables(kind, facts, sales_persona)
-        facts = variables["facts_json"]          # scrubbed of supplier rating / years labels (D070)
+        # scrubbed of supplier rating / years labels (D070) and of government words in labels (D109)
+        facts = variables["facts_json"] = strip_government_words(variables["facts_json"], self.terms)
 
         def check(o: NegotiatorFinalOutput) -> Optional[str]:
             return final_text_problem(o.utterance, facts, self.terms)

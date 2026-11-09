@@ -354,6 +354,42 @@ def body_retry_hint(text: str) -> float | None:
     return max(out) if out else None
 
 
+def _gemini_body(messages: list[dict[str, str]], temperature: float | None, max_tokens: int,
+                 disable_reasoning: bool) -> dict:
+    """OpenAI-style messages -> Gemini generateContent body (system -> systemInstruction, assistant -> model).
+    shortcut: seed is not sent (the Gemma on Gemini API docs do not list it); it stays in the cache key."""
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    body: dict[str, Any] = {"contents": [
+        {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+        for m in messages if m["role"] != "system"]}
+    if system:
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    config: dict[str, Any] = {"maxOutputTokens": max_tokens}
+    if temperature is not None:
+        config["temperature"] = temperature
+    if disable_reasoning:
+        # Gemma 4: "minimal" turns thinking off. Source: https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api
+        config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+    body["generationConfig"] = config
+    return body
+
+
+def _from_gemini(data: dict) -> dict:
+    """Gemini generateContent response -> the OpenAI chat shape the client reads; "thought" parts are dropped."""
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    usage = data.get("usageMetadata") or {}
+    return {
+        "choices": [{"message": {"content": "".join(p.get("text", "") for p in parts if not p.get("thought"))},
+                     "finish_reason": cand.get("finishReason")}],
+        "usage": {"prompt_tokens": usage.get("promptTokenCount", 0),
+                  "completion_tokens": usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0),
+                  "total_tokens": usage.get("totalTokenCount", 0)},
+        "model": data.get("modelVersion"),
+        "error": data.get("promptFeedback"),     # blockReason etc.; only used in the empty-answer diagnostic
+    }
+
+
 def compute_wait_s(linear_s: float, hint_s: float | None, margin_s: float, max_wait_s: float) -> float:
     """D067: max(linear, int(hint + margin)) clamped to [8, max_wait_s]."""
     wait = float(linear_s)
@@ -366,6 +402,15 @@ def _require(cfg: dict, key: str, where: str = "llm") -> Any:
     if key not in cfg or cfg[key] is None:
         raise ValueError(f"Missing required setting {where}.{key} (see D024)")
     return cfg[key]
+
+
+def active_llm(settings: dict) -> tuple[str, str]:
+    """(backend, model) a client built from *settings* really uses: GTGEN_LLM_BACKEND overrides llm.backend and the
+    backend block's model overrides llm.model.  Provenance records these (D108), not the settings-file defaults."""
+    llm_cfg = settings.get("llm", {})
+    backend = os.environ.get("GTGEN_LLM_BACKEND") or llm_cfg.get("backend", "openrouter")
+    b = (llm_cfg.get("backends") or {}).get(backend) or {}
+    return backend, b.get("model", llm_cfg.get("model", "google/gemma-4-26b-a4b-it:free"))
 
 
 class LLMClient:
@@ -391,14 +436,22 @@ class LLMClient:
         self._key_lock = threading.Lock()
         self._prompt_name: str | None = None      # set by call(); selects the key role for _api_call
         self._last_key: dict = {}                 # {"api_key_role", "api_key_env"} of the latest request
-        backend = os.environ.get("GTGEN_LLM_BACKEND") or llm_cfg.get("backend", "openrouter")
+        backend, model = active_llm(settings)
         backends: dict = llm_cfg.get("backends", {})
         if backend not in backends:
             raise ValueError(
                 f"Unknown LLM backend {backend!r}; configured: {sorted(backends)}"
             )
         self._backend: str = backend
-        self._provider: dict = dict(backends[backend].get("provider", {}))
+        b = backends[backend]
+        self._provider: dict = dict(b.get("provider", {}))
+        # Direct Google backend (api: gemini): native generateContent, one key for every role (no OpenRouter pools).
+        self._gemini: bool = b.get("api") == "gemini"
+        self._base_url = b.get("base_url", self._base_url)
+        self._model = model
+        self._extra_body: dict = dict(b.get("extra_body") or {})   # D108: backend-specific body fields (OpenAI path)
+        if b.get("api_key_env"):
+            self._api_key_env, self._api_key_roles, self._api_key_pools = b["api_key_env"], {}, {}
         # D024 runtime limits: required, no silent defaults.  They are NOT part
         # of the cache key (D018).
         self._max_tokens_per_call: int = int(_require(llm_cfg, "max_tokens_per_call"))
@@ -409,8 +462,9 @@ class LLMClient:
         self._min_completion: int = int(_require(llm_cfg, "min_completion_tokens"))
         self._max_retries: int = int(_require(llm_cfg, "max_retries"))
         self._timeout_s: float = float(_require(llm_cfg, "timeout_s"))
-        rl = _require(llm_cfg, "rate_limit")
-        tpm = llm_cfg.get("tpm_limit")                  # D068: absent = token pacer off
+        # D108: a backend block may set its own limits (another provider's quota); tpm_limit: null = pacer off.
+        rl = b.get("rate_limit") or _require(llm_cfg, "rate_limit")
+        tpm = b.get("tpm_limit", llm_cfg.get("tpm_limit"))   # D068: absent = token pacer off
         self._tpm_budget: float | None = (float(tpm) * float(llm_cfg.get("tpm_safety", 0.8))) if tpm else None
         self._batch_completion_target: int = int(llm_cfg.get("batch_completion_target", self._max_tokens))
         self._expected_completion: int | None = None
@@ -425,10 +479,11 @@ class LLMClient:
         self._margin_s: float = float(hr.get("retry_after_margin_s", 5))
         self._max_wait_s: float = float(hr.get("max_wait_s", 300))
         self._non_retryable: set[int] = {int(x) for x in hr.get("non_retryable_statuses", [400, 401, 402, 403, 404, 422])}
-        self._disable_reasoning: bool = bool(llm_cfg.get("disable_reasoning", False))   # transport only, not in cache key
+        # transport only, not in cache key; D108: a backend block may override it (its extra_body says how instead)
+        self._disable_reasoning: bool = bool(b.get("disable_reasoning", llm_cfg.get("disable_reasoning", False)))
         self._temperatures: dict[str, float] = llm_cfg.get("temperature", {})
         # D062: structured-output mode; absent = auto (current behaviour: send response_format json_schema).
-        self._structured: str = str(llm_cfg.get("structured_output", "auto"))
+        self._structured: str = str(b.get("structured_output", llm_cfg.get("structured_output", "auto")))
         if self._structured not in _STRUCTURED_MODES:
             raise ValueError(f"llm.structured_output must be one of {_STRUCTURED_MODES}, got {self._structured!r}")
         self._empty_diag: str | None = None
@@ -979,11 +1034,17 @@ class LLMClient:
             body["provider"] = self._provider
         if self._disable_reasoning:
             body["reasoning"] = {"enabled": False}
+        body.update(self._extra_body)
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        if self._gemini:      # replaces the OpenAI-style request built above
+            url = f"{self._base_url}/models/{self._model}:generateContent"
+            body = _gemini_body(self._wire_messages(messages, response_model), temperature, max_tokens,
+                                self._disable_reasoning)
+            headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
         record = {"est_input_tokens": self._input_estimate(messages, response_model), "max_tokens": max_tokens,
                   "usage": None}
@@ -992,7 +1053,9 @@ class LLMClient:
         n_total = self._http_max_attempts
         for attempt in range(1 + n_total):
             if self._tpm_budget is not None:      # D068: every attempt (incl. retries) re-reserves
-                limiter.reserve_tokens(record["est_input_tokens"] + self._expected_completion_tokens(max_tokens),
+                # D105: Google's TPM counts input only (https://ai.google.dev/gemini-api/docs/rate-limits)
+                completion = 0 if self._gemini else self._expected_completion_tokens(max_tokens)
+                limiter.reserve_tokens(record["est_input_tokens"] + completion,
                                        self._tpm_budget, key_role or key_env)
             limiter.acquire(self._min_interval_s)
             self._http_attempts += 1
@@ -1048,6 +1111,8 @@ class LLMClient:
 
         assert resp is not None
         data = resp.json()
+        if self._gemini:
+            data = _from_gemini(data)
 
         # Log provider information if available
         provider = data.get("provider") or resp.headers.get("x-provider")
