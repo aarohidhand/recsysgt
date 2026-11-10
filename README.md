@@ -74,7 +74,7 @@ the raw CSVs. `data/raw/` is the default folder; `data/canonical/` is the defaul
 | `blanket` / `pump` (e.g. Submersible Pump) | 1 |
 | `cable` / `transformer` / `valve` / `sluice` (e.g. Submersible Cable, Sluice Valve) | 2 |
 | `office bag` / `laptop` (e.g. Laptop / Office Bag) | 3 |
-| Everything else (uncatalogued, e.g. DI Fittings) | 1 |
+| Everything else (uncatalogued, e.g. DI Fittings, Safety Footwear) | 3 (D112) |
 
 The runner passes `--personas 1` by default (`scripts/live_all_bids.sh`); the category still selects the tau sub-bands inside `build_scenario()` via `personas_for_category`. Use more bids if you need more conversations.
 

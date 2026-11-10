@@ -1453,3 +1453,16 @@ Tests: `tests/llm/test_d109_government_labels.py::test_reframe_retry_after_a_gov
 - Not changed: the descriptive fallback still accepts a value when any of its first 3 long words occurs in the text
   (for example "per" from "as per IS 744"). It is lenient, but no skip came from it.
 Tests: `tests/llm/test_d111_reframe_value_check.py`.
+
+## D112 (2026-11-09, user): every category outside the five core ones gets 3 personas
+- The user changed `personas_for_category` (`src/gtgen/llm/strata.py`): the default for a category that matches no
+  core keyword is now 3 (was 1, D089). The core counts stay: blanket/pump 1, cable/transformer/valve/sluice 2,
+  office bag/laptop 3. The keyword order is unchanged, so "pump" still wins over "cable".
+- Goal (user): more personas for the "other" categories. The 13 finished bids in `data 2` with such a category
+  (Safety Footwear IS 15298, kit bags, a camera kit) ran with 1 persona. They run again with 3 personas from
+  `out/rerun_personas.txt` (log folder `out/logs_personas`). When a bid finishes with 3 conversations, its old
+  1-persona folder moves to `out/gt_superseded/` (moved, not deleted), so no bid is counted twice.
+- Not covered: cable bids whose category also says "pump" (for example "Submersible Cable for Submersible Pumps")
+  still get 1 persona, because the pump keyword is checked first.
+- Result (2026-11-10 03:46 IST): all 13 bids finished with 3 conversations each (39 in all), none failed.
+Tests: `tests/llm/test_d112_personas_for_category.py`.
