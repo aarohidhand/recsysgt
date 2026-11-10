@@ -57,7 +57,7 @@ llm:
   # output is capped at 32,768 per request. Batching is the main defence against the 50 requests/day limit.
   # D068 (user, 2026-11-01; real Google AI Studio limits for Gemma 4 26B PER KEY): 30 rpm, 16K tokens/minute, 14.4K requests/day.
   # The binding limit is tokens per minute -> small batches + a per-key rolling token pacer. 262,144 context stays the hard ceiling.
-  tpm_limit: 8000                   # per process: 16000/key provider limit split over 2 concurrent runs on one key (2026-11-09 00:06 IST; 5300 for 3 runs); 16000 for one
+  tpm_limit: 16000                  # per process: one run on one key gets the full 16000/key provider limit (2026-11-09 18:33 IST); 8000 for 2 concurrent runs, 5300 for 3
   tpm_safety: 0.9                   # pacer budget = tpm_limit * tpm_safety (estimates are ~2x conservative; input + planned output counted; google backend: input only, D105)
   token_limit_total: 262144         # hard endpoint limit, input + output combined
   max_tokens_per_call: 14000       # our budget (~8% headroom: the estimator is conservative and the smoke call showed ~2x over-estimate)
@@ -72,8 +72,8 @@ llm:
   max_retries_final: 2              # D087: the closing turn has a deterministic safe fallback; don't burn 6 live retries on wording
   timeout_s: 600                    # long batched completions (up to 32k tokens) take minutes; a timeout would burn retries of the 50/day
   rate_limit:
-    requests_per_minute: 15         # per process: 30/key split over 2 concurrent runs (2026-11-09 00:06 IST; 10 for 3 runs); 30 for one
-    min_interval_s: 4.4             # 2 x 2.2 for 2 concurrent runs on one key (2026-11-09 00:06 IST; 6.6 for 3 runs); 2.2 for one
+    requests_per_minute: 30         # per process: one run gets the full 30/key (2026-11-09 18:33 IST); 15 for 2 concurrent runs, 10 for 3
+    min_interval_s: 2.2             # one run on one key (2026-11-09 18:33 IST); 4.4 for 2 concurrent runs, 6.6 for 3
   http_retry:                       # transport retries on 429 / 5xx / timeouts
     max_attempts: 12                # retries after the first try (D107, user 2026-11-07; was 6 from 2026-10-31)
     backoff_s: [8, 16, 24, 32, 40, 48, 60, 90, 120, 120, 120, 120]   # D107: ~13 min in all, outlasts a Google HTTP 500 burst; used when no Retry-After header is present
