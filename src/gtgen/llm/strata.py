@@ -81,7 +81,7 @@ def personas_for_category(product_category: Optional[str]) -> int:
         return 2
     if "office bag" in cat or "laptop" in cat:
         return 3
-    return 1
+    return 3
 
 
 def _float_bands(lo: float, hi: float, n: int) -> list[list[float]]:
