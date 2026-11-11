@@ -1,3 +1,4 @@
+
 """D060 persona diversity helpers: seeded Latin-hypercube strata, company uniqueness, regeneration loop.
 
 Everything here is pure / deterministic (no LLM except through the runner passed to ``persona_unique``).
@@ -70,9 +71,8 @@ def tau_band_for_bid(bid_id: str, run_key: str, settings: Mapping,
 def personas_for_category(product_category: Optional[str]) -> int:
     """D080/D089: the number of tau sub-bands a product category uses.
 
-    The five pilot categories keep their tuned counts: cables 2, blankets/pumps 1, transformers/valves 2,
-    office/laptop bags 3. Every other category now defaults to 1 instead of 2, so uncatalogued bids do not
-    silently get a second persona.
+    The five core categories keep their tuned counts: blankets/pumps 1, transformers/valves/cables 2,
+    office/laptop bags 3. Every other category defaults to 3.
     """
     cat = (product_category or "").lower()
     if "blanket" in cat or "pump" in cat:
@@ -81,7 +81,7 @@ def personas_for_category(product_category: Optional[str]) -> int:
         return 2
     if "office bag" in cat or "laptop" in cat:
         return 3
-    return 1
+    return 3
 
 
 def _float_bands(lo: float, hi: float, n: int) -> list[list[float]]:
