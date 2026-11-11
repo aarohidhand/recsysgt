@@ -67,6 +67,7 @@ llm:
     retry_after_margin_s: 5
     max_wait_s: 300                 # cap on any single wait
     non_retryable_statuses: [400, 401, 402, 403, 404, 422]   # fail at once, never retry
+    quota_retry_interval_s: 60      # seconds to sleep between outer quota-exhaustion retries (429/504/daily limit)
   temperature:
     reframe: 0.2
     normalise: 0.0

@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Optional, Type, TypeVar
 
@@ -96,6 +97,18 @@ _KNOWN_TERMS = ("budget_inr", "qty_vs_moq", "preferred_states")
 _RANKING_ONLY_TERMS = ("min_supplier_rating", "min_tenure_years")
 NEGOTIATOR_PROMPTS = frozenset({"negotiator_extract", "negotiator_reply", "negotiator_clarify", "negotiator_interpret",
                                 "negotiator_final", "doc_claim"})
+# Substrings that indicate a temporary daily/rate-limit quota exhaustion rather than a hard failure.
+_QUOTA_SIGNALS = ("quota", "rate limit", "rate_limit", "daily", "free-models-per-day",
+                  "max_retry_after_s", "retry hint", "tokens per day", "requests per day")
+
+
+def _is_quota_error(exc: LLMNetworkError) -> bool:
+    """True when the LLMNetworkError looks like a temporary quota/rate-limit exhaustion that may clear later."""
+    status = getattr(exc, "status", None)
+    if status in (429, 504):   # 429 = rate limit; 504 = OpenRouter gateway wrapping a downstream 429
+        return True
+    msg = str(exc).lower()
+    return any(sig in msg for sig in _QUOTA_SIGNALS)
 
 
 def tightness_hint(target: Optional[int]) -> str:
@@ -913,7 +926,9 @@ class LLMRunners:
 
         D066: when every retry is used up (schema validation, output check, or HTTP retries) the call raises
         ``ScenarioSkipped`` -- it never returns a value or None; the caller skips the scenario/bid.  ``max_retries``
-        overrides the global budget for prompts with a safe deterministic fallback (D087)."""
+        overrides the global budget for prompts with a safe deterministic fallback (D087).
+        Quota/rate-limit errors (429, 504, daily quota) are retried indefinitely after
+        ``llm.http_retry.quota_retry_interval_s`` seconds; the call only fails fast for auth/payment errors."""
         retries = self.max_retries if max_retries is None else int(max_retries)
         if ctx is None and getattr(self.client, "strict", False):
             raise MissingConversationContext(
@@ -933,46 +948,65 @@ class LLMRunners:
             raise ValueError(f"prompt {name} declares {spec.output_schema}, runner uses {model.__name__}")
         temperature = self.temperature_for(spec.temperature_key)
         base = [{"role": "user", "content": spec.render(**variables)}]
-        messages = list(base)
-        ids: list[str] = []
-        err: Optional[str] = None
-        for attempt in range(retries + 1):
-            # A retry must sample again: the same prompt would otherwise hit the cache entry written by the
-            # rejected attempt and replay the same answer forever.  The attempt number is cache-key-only (never
-            # rendered); attempt 0 keeps the original key so existing fixtures / warm caches stay valid.
-            extra = variables if attempt == 0 else {**variables, "_retry_attempt": attempt}
-            try:
-                parsed, cid = self.client.call(
-                    name, spec.version, messages, model, temperature=temperature, seed=seed,
-                    extra_inputs=extra, **kw,
+        quota_interval = float(
+            ((self.settings.get("llm") or {}).get("http_retry") or {}).get("quota_retry_interval_s", 60)
+        )
+        quota_attempt = 0
+        while True:
+            messages = list(base)
+            ids: list[str] = []
+            err: Optional[str] = None
+            quota_exc: Optional[LLMNetworkError] = None
+            for attempt in range(retries + 1):
+                # A retry must sample again: the same prompt would otherwise hit the cache entry written by the
+                # rejected attempt and replay the same answer forever.  The attempt number is cache-key-only (never
+                # rendered); attempt 0 keeps the original key so existing fixtures / warm caches stay valid.
+                extra = variables if attempt == 0 else {**variables, "_retry_attempt": attempt}
+                try:
+                    parsed, cid = self.client.call(
+                        name, spec.version, messages, model, temperature=temperature, seed=seed,
+                        extra_inputs=extra, **kw,
+                    )
+                except LLMValidationError as exc:
+                    raise ScenarioSkipped(name, f"schema validation failed: {str(exc)[:300]}", ctx) from exc
+                except LLMNetworkError as exc:
+                    if getattr(exc, "status", None) in (401, 402, 403):
+                        raise                      # auth / payment: not a per-scenario problem
+                    if _is_quota_error(exc):
+                        quota_exc = exc            # break out to the quota-retry loop below
+                        break
+                    raise ScenarioSkipped(name, f"HTTP failed after retries: {str(exc)[:300]}", ctx) from exc
+                except LLMBudgetError as exc:
+                    # D066: a batch that cannot leave room for a completion is a per-scenario failure, never a reason
+                    # to abort the whole run (the planner already splits on tokens; this fires only for a huge item).
+                    raise ScenarioSkipped(name, f"prompt budget exceeded: {str(exc)[:300]}", ctx) from exc
+                ids.append(cid)
+                err = check(parsed) if check else None
+                if err is None:
+                    return parsed, ids, None
+                correction = {"role": "user",
+                              "content": f"Your answer was rejected: {err}. Return the corrected JSON."}
+                rejected = {"role": "assistant", "content": parsed.model_dump_json()}
+                # Keep the retry prompt bounded: the original prompt + the most recent rejected answer + the
+                # correction (not the whole history).  If even that leaves too little completion room, drop the
+                # rejected answer - the error text alone still says what to fix - so retries cannot grow the prompt
+                # past the client's budget.
+                retry = base + [rejected, correction]
+                messages = retry if self._fits_budget(retry, model) else base + [correction]
+
+            if quota_exc is not None:
+                quota_attempt += 1
+                logger.warning(
+                    "quota/rate-limit on prompt %r (outer attempt %d); sleeping %.0fs before retry: %s",
+                    name, quota_attempt, quota_interval, str(quota_exc)[:200],
                 )
-            except LLMValidationError as exc:
-                raise ScenarioSkipped(name, f"schema validation failed: {str(exc)[:300]}", ctx) from exc
-            except LLMNetworkError as exc:
-                if getattr(exc, "status", None) in (401, 402, 403):
-                    raise                      # auth / payment: not a per-scenario problem
-                raise ScenarioSkipped(name, f"HTTP failed after retries: {str(exc)[:300]}", ctx) from exc
-            except LLMBudgetError as exc:
-                # D066: a batch that cannot leave room for a completion is a per-scenario failure, never a reason
-                # to abort the whole run (the planner already splits on tokens; this fires only for a huge item).
-                raise ScenarioSkipped(name, f"prompt budget exceeded: {str(exc)[:300]}", ctx) from exc
-            ids.append(cid)
-            err = check(parsed) if check else None
-            if err is None:
-                return parsed, ids, None
-            correction = {"role": "user",
-                          "content": f"Your answer was rejected: {err}. Return the corrected JSON."}
-            rejected = {"role": "assistant", "content": parsed.model_dump_json()}
-            # Keep the retry prompt bounded: the original prompt + the most recent rejected answer + the
-            # correction (not the whole history).  If even that leaves too little completion room, drop the
-            # rejected answer - the error text alone still says what to fix - so retries cannot grow the prompt
-            # past the client's budget.
-            retry = base + [rejected, correction]
-            messages = retry if self._fits_budget(retry, model) else base + [correction]
-        if on_exhausted is not None:
-            fb = on_exhausted(parsed, err)
-            return fb, ids, err
-        raise ScenarioSkipped(name, f"output check failed after {retries} retries: {err}", ctx)
+                time.sleep(quota_interval)
+                continue   # restart: fresh messages + ids, try again
+
+            if on_exhausted is not None:
+                fb = on_exhausted(parsed, err)
+                return fb, ids, err
+            raise ScenarioSkipped(name, f"output check failed after {retries} retries: {err}", ctx)
 
     def _call_or_fallback(
         self, name: str, variables: dict[str, Any], model: Type[M],
